@@ -19,9 +19,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
-      - name: 📦 Install pnpm
-        run: npm install -g pnpm
+      - name: 🔍 Verify lockfile consistency
+        run: pnpm install --frozen-lockfile || (
+          echo "❌ Lockfile out of sync! Run 'pnpm install' locally and commit pnpm-lock.yaml." && exit 1)
 
       - name: 📦 Install Dependencies
         run: pnpm install --no-frozen-lockfile
@@ -29,8 +35,9 @@ jobs:
       - name: 🔨 Build Project
         run: pnpm run build
 
-      - name: 📦 Check Bundle Size
+      - name: 📊 Check Bundle Size
         uses: preactjs/compressed-size-action@v2
         with:
-          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
           pattern: "dist/*.{cjs,mjs}"
+          build-script: none
