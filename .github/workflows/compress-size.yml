@@ -12,27 +12,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout the repository
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      # 1️⃣ Setup Node.js
+      # 2️⃣ Setup Node.js (with Corepack available)
       - name: 🏗️ Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
+          cache: 'pnpm' # enables pnpm cache after activation
 
-      # 2️⃣ Setup pnpm (this fixes the "Unable to locate executable file" error)
-      - name: 🧩 Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      # 3️⃣ Enable Corepack and activate pnpm
+      - name: 🔧 Enable Corepack & Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          pnpm -v
 
-      # 3️⃣ (Optional) Verify pnpm
-      - name: Verify pnpm installation
-        run: pnpm -v
-
-      # 4️⃣ Install dependencies
+      # 4️⃣ Install dependencies (skip frozen lockfile check if out-of-date)
       - name: 📦 Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -40,7 +38,7 @@ jobs:
       - name: 🔨 Build Project
         run: pnpm run build
 
-      # 6️⃣ Check bundle size
+      # 6️⃣ Check Bundle Size
       - name: 📊 Check Bundle Size
         uses: preactjs/compressed-size-action@v2
         with:
