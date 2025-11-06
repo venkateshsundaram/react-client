@@ -15,28 +15,35 @@ jobs:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
+      # 1️⃣ Setup Node.js
       - name: 🏗️ Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
 
-      # 👇 Fix: Install pnpm here
+      # 2️⃣ Setup pnpm (this fixes the "Unable to locate executable file" error)
       - name: 🧩 Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
-      # Optional safety: ensure pnpm is available
-      - run: pnpm -v
+      # 3️⃣ (Optional) Verify pnpm
+      - name: Verify pnpm installation
+        run: pnpm -v
 
+      # 4️⃣ Install dependencies
       - name: 📦 Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
+      # 5️⃣ Build your project
       - name: 🔨 Build Project
         run: pnpm run build
 
+      # 6️⃣ Check bundle size
       - name: 📊 Check Bundle Size
         uses: preactjs/compressed-size-action@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: "dist/*.{cjs,mjs}"
+          build-script: none
