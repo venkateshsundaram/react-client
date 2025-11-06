@@ -5,13 +5,21 @@
 react-client is a lightweight CLI and runtime for building React apps with fast iteration. It is designed to be esbuild-based, Node-native, and modular like Vite/Next.js while remaining minimal.
 
 ## Table of Contents
-  - [Installation](#installation)
-  - [FAQ](#faq)
-  - [Conclusion](#conclusion)
-  - [Contributing](#contributing)
-  - [Publishing](#publishing)
-  - [Feedbacks and Issues](#feedbacks-and-issues)
-  - [License](#license)
+- [Installation](#installation)
+- [Wiki](#wiki)
+- [Available templates](#available-templates)
+- [Features supported by the CLI](#features-supported-by-the-cli)
+- [Template specifics](#template-specifics)
+   * [react-ssr-ts](#react-ssr-ts)
+   * [react-tailwind-ts](#react-tailwind-ts)
+- [How the CLI wires features](#how-the-cli-wires-features)
+- [Local testing checklist](#local-testing-checklist)
+- [Troubleshooting](#troubleshooting)
+- [Extending & Contributing](#extending-contributing)
+- [Contributing](#contributing)
+- [Publishing](#publishing)
+- [Feedbacks and Issues](#feedbacks-and-issues)
+- [License](#license)
 
 ## Installation
 
@@ -97,18 +105,7 @@ npm run dev
 ## Extending & Contributing
 
 - Add plugins under `src/plugins` with `configResolved` and `transform` hooks.
-- Add new templates to `src/templates` following the existing structure.
-- Tests: add Vitest/Jest configurations inside templates and include `test` npm scripts.
-
-## FAQ
-
-- If you want to manage your global state like `useState` as usual.
-- If you want to manage your global state without involving in setting up Provider Component, Dispatcher, Reducer, etc.
-- If you want to see `Redux` or `Context API` alternative.
-
-## Conclusion
-
-If you need the simplest, fastest, and most advanced state management solution for React, react-client beats Redux, Recoil, MobX, Jotai, and even Zustand in performance, reactivity, and developer experience 🚀.
+- Tests: add Jest configurations inside templates and include `test` npm scripts.
 
 ## Contributing
 
