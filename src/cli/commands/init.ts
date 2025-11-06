@@ -10,7 +10,26 @@ export default async function init(name: string, opts: InitOptions = {}) {
   const root = path.resolve(process.cwd(), name);
   const template = opts.template || 'react-ts';
   await fs.ensureDir(root);
-  const tpl = path.join(__dirname, '../../templates', template);
+  // Resolve templates directory by walking up from __dirname until we find a
+  // `templates` folder. This handles different install layouts (local dev,
+  // global install, packaged dist) transparently.
+  let cur = __dirname;
+  let tplDir: string | null = null;
+  while (true) {
+    const candidate = path.join(cur, 'templates');
+    if (fs.existsSync(candidate)) {
+      tplDir = candidate;
+      break;
+    }
+    const parent = path.dirname(cur);
+    if (parent === cur) break; // reached filesystem root
+    cur = parent;
+  }
+  if (!tplDir) {
+    console.error('Templates directory not found in package layout');
+    process.exit(1);
+  }
+  const tpl = path.join(tplDir, template);
   if (!fs.existsSync(tpl)) {
     console.error('Template not found:', template);
     process.exit(1);
