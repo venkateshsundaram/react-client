@@ -11,6 +11,12 @@ importers:
       commander:
         specifier: ^14.0.2
         version: 14.0.2
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
+      fs-extra:
+        specifier: ^11.3.2
+        version: 11.3.2
     devDependencies:
       '@commitlint/cli':
         specifier: ^19.8.0
@@ -36,9 +42,6 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.46.3
         version: 8.46.3(eslint@8.57.1)(typescript@5.9.3)
-      esbuild:
-        specifier: ^0.25.12
-        version: 0.25.12
       eslint:
         specifier: ^8.0.0
         version: 8.57.1
@@ -51,9 +54,6 @@ importers:
       eslint-plugin-react:
         specifier: ^7.32.2
         version: 7.37.5(eslint@8.57.1)
-      fs-extra:
-        specifier: ^11.1.1
-        version: 11.3.2
       husky:
         specifier: ^9.1.7
         version: 9.1.7

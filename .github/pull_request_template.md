@@ -25,7 +25,7 @@ Fixes #
 - [ ] For any new features or bug fixes, both positive and negative test cases have been added
 - [ ] For any new features, documentation has been added
 - [ ] For any documentation changes, the text has been proofread and is clear to both experienced users and beginners.
-- [ ] Format your code with [prettier](https://github.com/prettier/prettier) (`yarn run format`).
+- [ ] Format your code with [prettier](https://github.com/prettier/prettier) (`npm run format`).
 
 Here is a short checklist of additional things to keep in mind before submitting:
 

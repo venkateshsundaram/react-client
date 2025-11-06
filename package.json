@@ -6,11 +6,10 @@
   "types": "dist/index.d.ts",
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "templates"
   ],
-  "bin": {
-    "react-client": "dist/cli/index.js"
-  },
+  "bin": "dist/cli/index.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/venkateshsundaram/react-client.git"
@@ -94,7 +93,7 @@
   },
   "dependencies": {
     "commander": "^14.0.2",
-    "fs-extra": "^11.1.1",
-    "esbuild": "^0.25.12"
+    "esbuild": "^0.25.12",
+    "fs-extra": "^11.3.2"
   }
 }
