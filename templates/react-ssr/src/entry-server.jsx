@@ -1,0 +1,1 @@
+import React from 'react';import { renderToString } from 'react-dom/server';import Home from './pages/index';exports.render = function(url){ const Page = Home; return Promise.resolve(renderToString(React.createElement(Page))); };

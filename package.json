@@ -1,0 +1,96 @@
+{
+  "name": "react-client",
+  "version": "1.0.2",
+  "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration. It is designed to be esbuild-based, Node-native, and modular like Vite/Next.js with SSR, HMR, Tailwind, CSS Modules, and generators.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "react-client": "dist/cli/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/venkateshsundaram/react-client.git"
+  },
+  "keywords": [
+    "react",
+    "javascript",
+    "typescript",
+    "cli",
+    "react-cli",
+    "react-client",
+    "ssr",
+    "esbuild",
+    "tailwind",
+    "css-modules",
+    "hmr",
+    "framework",
+    "tooling"
+  ],
+  "author": "venkateshsundaram",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "templates/*"
+  ],
+  "bugs": {
+    "url": "https://github.com/venkateshsundaram/react-client/issues"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "compile": "tsc -p tsconfig.build.json",
+    "build": "npm run clean && npm run compile",
+    "build:cli": "node dist/cli/index.js build",
+    "build:ssr": "node dist/cli/index.js build:ssr",
+    "dev": "node dist/cli/index.js dev",
+    "prepare": "npm run compile",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "release": "standard-version",
+    "postrelease": "git push --follow-tags",
+    "prepublishOnly": "npm run compile",
+    "test": "jest",
+    "typecheck": "tsc --noEmit"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.0",
+    "@commitlint/config-conventional": "^19.8.0",
+    "@types/fs-extra": "^9.0.13",
+    "@types/jest": "^29.0.0",
+    "@types/node": "^18.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.3",
+    "@typescript-eslint/parser": "^8.46.3",
+    "esbuild": "^0.25.12",
+    "eslint": "^8.0.0",
+    "eslint-config-prettier": "^8.0.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "eslint-plugin-react": "^7.32.2",
+    "fs-extra": "^11.1.1",
+    "husky": "^9.1.7",
+    "jest": "^29.0.0",
+    "lint-staged": "^15.4.3",
+    "prettier": "^2.8.8",
+    "standard-version": "^9.5.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.3.0"
+  }
+}
