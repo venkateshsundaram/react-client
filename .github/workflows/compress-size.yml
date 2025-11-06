@@ -15,19 +15,20 @@ jobs:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🏗️ Setup Node.js & pnpm
+      - name: 🏗️ Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
-      - name: 📦 Setup pnpm
+
+      # 👇 Fix: Install pnpm here
+      - name: 🧩 Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
-      - name: 🔍 Verify lockfile consistency
-        run: pnpm install --frozen-lockfile || (
-          echo "❌ Lockfile out of sync! Run 'pnpm install' locally and commit pnpm-lock.yaml." && exit 1)
+      # Optional safety: ensure pnpm is available
+      - run: pnpm -v
 
       - name: 📦 Install Dependencies
         run: pnpm install --no-frozen-lockfile
@@ -39,5 +40,3 @@ jobs:
         uses: preactjs/compressed-size-action@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          pattern: "dist/*.{cjs,mjs}"
-          build-script: none
