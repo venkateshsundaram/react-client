@@ -6,6 +6,7 @@ react-client is a lightweight CLI and runtime for building React apps with fast 
 
 ## Table of Contents
 - [Installation](#installation)
+- [With Config](#with-config)
 - [Wiki](#wiki)
 - [Available templates](#available-templates)
 - [Features supported by the CLI](#features-supported-by-the-cli)
@@ -32,6 +33,20 @@ npm install -g react-client
 react-client init myapp --template react-ts
 cd myapp
 npm run dev
+```
+
+## With Config
+
+The `init` command supports a small set of helpers for scaffolding projects from the bundled templates. Notably:
+
+- `--template <name>`: choose a template (defaults to `react-ts`).
+- `--with-config`: also create a `react-client.config.ts` file in the generated project with a minimal `defineConfig({})` stub.
+
+Example:
+
+```bash
+react-client init myapp --template react-ts --with-config
+# creates `myapp/` and writes `myapp/react-client.config.ts`
 ```
 
 ## Wiki
