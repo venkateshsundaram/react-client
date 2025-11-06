@@ -1,6 +1,6 @@
 {
   "name": "react-client",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration. It is designed to be esbuild-based, Node-native, and modular like Vite/Next.js with SSR, HMR, Tailwind, CSS Modules, and generators.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
