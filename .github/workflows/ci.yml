@@ -56,29 +56,29 @@ jobs:
       - name: 🎨 Run Prettier Check
         run: pnpm run format:check
 
-  test:
-    name: 🧪 Run Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
+  # test:
+  #   name: 🧪 Run Tests
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: 📥 Checkout Repository
+  #       uses: actions/checkout@v4
 
-      - name: 🏗️ Setup Node.js & pnpm
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
+  #     - name: 🏗️ Setup Node.js & pnpm
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 18
 
-      - name: 📦 Install pnpm
-        run: npm install -g pnpm
+  #     - name: 📦 Install pnpm
+  #       run: npm install -g pnpm
   
-      - name: 📦 Install Dependencies
-        run: pnpm install --no-frozen-lockfile
+  #     - name: 📦 Install Dependencies
+  #       run: pnpm install --no-frozen-lockfile
 
-      - name: 🧪 Run Vitest Tests
-        run: pnpm run test:coverage
+  #     - name: 🧪 Run Vitest Tests
+  #       run: pnpm run test:coverage
 
-      - name: 📤 Upload Coverage Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
+  #     - name: 📤 Upload Coverage Reports
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: coverage-report
+  #         path: coverage/

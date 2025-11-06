@@ -1,5 +1,5 @@
 {
-  "name": "my-react-ssr-ts-app",
+  "name": "template-react-ssr",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -10,12 +10,5 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.0.0",
-    "@types/react-dom": "^18.0.0",
-    "esbuild": "^0.25.12",
-    "react-refresh": "^0.14.0",
-    "typescript": "^5.0.0"
   }
 }

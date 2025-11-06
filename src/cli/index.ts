@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import initCmd from './commands/init';
 import generateCmd from './commands/generate';
+import { InitOptions, GenerateOptions } from './types';
 import devCmd from './commands/dev';
 import buildCmd from './commands/build';
 import buildSsrCmd from './commands/build.ssr';
@@ -12,13 +13,13 @@ program
   .command('init <name>')
   .option('-t,--template <template>', 'template', 'react-ts')
   .option('--with-config', 'create config')
-  .action((name, opts) => initCmd(name, opts));
+  .action((name: string, opts: InitOptions) => initCmd(name, opts));
 program
   .command('generate <kind> <name>')
   .option('-p,--path <path>', 'path')
   .option('--no-ts', 'generate JS')
   .option('-f,--force', 'force')
-  .action((k, n, o) => generateCmd(k, n, o));
+  .action((k: string, n: string, o: GenerateOptions) => generateCmd(k, n, o));
 program
   .command('dev')
   .description('start dev server')
