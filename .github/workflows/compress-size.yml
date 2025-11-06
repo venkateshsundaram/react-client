@@ -26,8 +26,12 @@ jobs:
       - name: 🔨 Build Project
         run: npm run build
 
-      - name: 📦 Check Bundle Size
+      - name: Compressed Size Action
         uses: preactjs/compressed-size-action@v2
         with:
-          repo-token: "${{ secrets.GITHUB_TOKEN }}"
-          pattern: "dist/*.{cjs,mjs}"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: dist/*.{cjs,mjs}
+          build-script: build
+          show-total: true
+          collapse-unchanged: true
+          minimum-change-threshold: 1
