@@ -32,6 +32,7 @@ To install the latest stable version, run the following command:
 npm install -g react-client
 react-client init myapp --template react-ts
 cd myapp
+npm install
 npm run dev
 ```
 
@@ -74,6 +75,72 @@ react-client init myapp --template react-ts --with-config
 
 ## Template specifics
 
+### react
+
+- `src/App.jsx` — main app component
+- `src/main.jsx` — client entry that mounts React to the DOM
+- `index.html` — HTML template used by the bundler
+- `package.json` lists `react` and `react-dom` as dependencies and includes devDependencies (esbuild, scripts) for local testing
+
+- `--with-config`: creates `react-client.config.ts` with a minimal `defineConfig({})` stub and helpful comments (dev server port, root) tailored to a client-only app.
+
+```ts
+// react / client-only example
+import { defineConfig } from 'react-client'
+
+export default defineConfig({
+  root: '.',
+  server: { port: 3000 },
+  build: { outDir: 'dist/client' }
+})
+```
+
+### react-ts
+
+- `src/App.tsx` — main app component (TypeScript + JSX)
+- `src/main.tsx` — client entry (TypeScript) that mounts the app
+- `tsconfig.json` — minimal TypeScript configuration tailored for the template
+- `index.html` — HTML template used by the bundler
+- `package.json` includes `react`, `react-dom` and `devDependencies` like `typescript` and `@types/react`, `@types/react-dom` for local development
+
+- `--with-config`: creates `react-client.config.ts` with a TypeScript-friendly `defineConfig({})` stub (typed imports) and suggested TypeScript-related defaults (e.g., `root`, `esbuild` TS options) comments.
+
+```ts
+// react-ts example (TypeScript-friendly)
+import { defineConfig } from 'react-client'
+
+export default defineConfig({
+  root: '.',
+  server: { port: 3000 },
+  build: { outDir: 'dist/client' },
+  // TS-specific hints: configure `tsconfig` or esbuild TS options if needed
+})
+```
+
+### react-ssr
+
+- `src/entry-client.jsx` — client hydration entry
+- `src/entry-server.jsx` — server rendering entry (exports `render(url)` or similar API)
+- `src/pages/` — route components used by the SSR renderer
+- `index.html` — base HTML template used by the build system
+- `package.json` lists devDependencies required for local testing (esbuild, react-refresh) and provides scripts for building and running the SSR preview
+
+- `--with-config`: the generated `react-client.config.ts` includes an SSR-focused stub with comments for server entry/port and output directories (hints for `ssr` or `server` options) so you can quickly enable SSR-related plugins.
+
+```ts
+// react-ssr example
+import { defineConfig } from 'react-client'
+
+export default defineConfig({
+  root: '.',
+  server: { port: 3000 },
+  ssr: {
+    entry: 'src/entry-server.jsx', // change to .tsx for TS template
+    outDir: 'dist/server'
+  }
+})
+```
+
 ### react-ssr-ts
 
 - `src/entry-client.tsx` — client hydration entry
@@ -81,12 +148,68 @@ react-client init myapp --template react-ts --with-config
 - `src/pages/` — route components
 - `index.html` — template used by build system
 - `package.json` lists devDependencies required for local testing (esbuild, react-refresh)
+- `tsconfig.json` and `@types/*` entries are included to support TypeScript development
+
+- `--with-config`: creates a typed `react-client.config.ts` stub that includes notes for SSR/TypeScript integration (server entry, `tsconfig` path, and build output locations) to help you customize server-side rendering options.
+
+```ts
+// react-ssr-ts example (typed)
+import { defineConfig } from 'react-client'
+
+export default defineConfig({
+  root: '.',
+  server: { port: 3000 },
+  ssr: {
+    entry: 'src/entry-server.tsx',
+    outDir: 'dist/server'
+  },
+  // Tip: point to `tsconfig.json` or adjust esbuild TS options if you customize builds
+})
+```
+
+### react-tailwind
+
+- `postcss.config.cjs` and `tailwind.config.cjs` included
+- `src/index.css` with Tailwind directives (`@tailwind base; @tailwind components; @tailwind utilities;`)
+- `index.html` and JS entries (`src/main.jsx`, `src/App.jsx`) wired to import the generated CSS
+- `package.json` includes Tailwind/PostCSS devDependencies (install locally in the app)
+
+- `--with-config`: creates `react-client.config.ts` containing a minimal stub plus a Tailwind hint block that shows how to enable/inject PostCSS/Tailwind processing (for example enabling the PostCSS plugin or pointing to `postcss.config.cjs`).
+
+```ts
+// react-tailwind example
+import { defineConfig } from 'react-client'
+
+export default defineConfig({
+  root: '.',
+  server: { port: 3000 },
+  css: {
+    postcssConfig: 'postcss.config.cjs'
+  }
+})
+```
 
 ### react-tailwind-ts
 
 - `postcss.config.cjs` and `tailwind.config.cjs` included
 - `src/index.css` with Tailwind directives
-- `package.json` includes tailwind/postcss devDependencies (install locally in the app)
+- `src/App.tsx` / `src/main.tsx` — TypeScript entry points that import the CSS
+- `tsconfig.json` provided for TypeScript templates
+- `package.json` includes Tailwind/PostCSS devDependencies (install locally in the app)
+
+- `--with-config`: generates a TypeScript `react-client.config.ts` stub that includes comments about wiring PostCSS/Tailwind and TypeScript settings (where to find `postcss.config.cjs` and `tsconfig.json`) to get Tailwind configured quickly.
+
+```ts
+// react-tailwind-ts example
+import { defineConfig } from 'react-client'
+
+export default defineConfig({
+  root: '.',
+  server: { port: 3000 },
+  css: { postcssConfig: 'postcss.config.cjs' },
+  // TypeScript hint: adjust tsconfig or esbuild options as needed
+})
+```
 
 ## How the CLI wires features
 
@@ -130,7 +253,7 @@ Development of react-client happens in the open on GitHub, and we are grateful t
 
 ## Publishing
 
-Before pushing your changes to Github, make sure that `version` in `package.json` is changed to newest version. Then run `npm install` for synchronize it to `package-lock.json` and `pnpm install` for synchronize it to `pnpm-lock.yaml`
+Before pushing your changes to Github, make sure that `version` in `package.json` is changed to newest version. Then run `npm install` to synchronize `package-lock.json`
 
 ## Feedbacks and Issues
 
