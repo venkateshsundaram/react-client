@@ -32,7 +32,6 @@
   ],
   "author": "venkateshsundaram",
   "license": "MIT",
-  "private": true,
   "workspaces": [
     "templates/*"
   ],
