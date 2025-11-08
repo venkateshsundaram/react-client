@@ -11,21 +11,22 @@
   "bugs": {
     "url": "https://github.com/venkateshsundaram/react-client/issues"
   },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "homepage": "https://github.com/venkateshsundaram/react-client#readme",
   "bin": {
     "react-client": "dist/cli/index.js"
   },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/index.js"
     },
     "./config": {
-      "import": "./dist/config.js",
+      "types": "./dist/config.d.ts",
       "require": "./dist/config.js",
-      "types": "./dist/config.d.ts"
+      "import": "./dist/config.js"
     }
   },
   "typesVersions": {
@@ -54,25 +55,28 @@
     "esbuild",
     "tooling",
     "vite-alternative",
-    "fast-refresh"
+    "fast-refresh",
+    "react-refresh",
+    "tailwind",
+    "developer-experience"
   ],
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist .turbo .react-client.temp.config*",
     "compile": "tsc -p tsconfig.build.json",
     "build": "npm run clean && npm run compile",
     "build:cli": "node dist/cli/index.js build",
     "build:ssr": "node dist/cli/index.js build:ssr",
     "dev": "node dist/cli/index.js dev",
     "prepare": "npm run compile",
-    "precommit": "lint-staged",
-    "lint": "eslint . --ext .ts",
+    "lint": "eslint . --ext .ts --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "release": "standard-version",
     "postrelease": "git push --follow-tags",
-    "prepublishOnly": "npm run compile",
+    "prepublishOnly": "npm run lint && npm run format:check && npm run build && npm test",
     "test": "jest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "bash scripts/local-verify.sh"
   },
   "lint-staged": {
     "*.ts": [
@@ -82,7 +86,8 @@
   },
   "husky": {
     "hooks": {
-      "pre-commit": "lint-staged"
+      "pre-commit": "lint-staged",
+      "pre-push": "npm run lint && npm run typecheck"
     }
   },
   "commitlint": {
@@ -130,5 +135,8 @@
     "standard-version": "^9.5.0",
     "ts-jest": "^29.0.0",
     "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

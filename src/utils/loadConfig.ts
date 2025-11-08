@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { pathToFileURL } from 'url';
 import chalk from 'chalk';
+import { build } from 'esbuild';
 
 export interface ReactClientConfig {
   root?: string;
@@ -11,76 +12,75 @@ export interface ReactClientConfig {
 }
 
 /**
- * Dynamically load react-client.config.(js|mjs|ts)
- * from the user project, not the CLI’s own folder.
+ * Dynamically loads react-client.config.(ts|js|mjs)
+ * Compiles .ts and .js configs to .mjs temporarily for import.
  */
 export async function loadReactClientConfig(cwd: string): Promise<ReactClientConfig> {
   let projectRoot = cwd;
 
   try {
-    // 🧭 Detect if running inside react-client source repo
+    // Detect if running inside react-client repo for local testing
     const pkgPath = path.join(cwd, 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
-      if (pkgJson.name === 'react-client') {
-        // Running CLI locally — auto-switch into example project (if found)
-        const myappPath = path.join(cwd, 'myapp');
-        if (fs.existsSync(myappPath)) {
-          console.log(chalk.gray('🧩 Detected local CLI environment, using ./myapp as root.'));
-          projectRoot = myappPath;
-        }
+    if (await fs.pathExists(pkgPath)) {
+      const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
+      if (pkg.name === 'react-client' && (await fs.pathExists(path.join(cwd, 'myapp')))) {
+        console.log(chalk.gray('🧩 Detected local CLI environment, using ./myapp as root.'));
+        projectRoot = path.join(cwd, 'myapp');
       }
     }
 
-    // 🔍 Possible config file names (prefer .js for Node compatibility)
     const filenames = [
-      'react-client.config.js',
-      'react-client.config.mjs',
       'react-client.config.ts',
+      'react-client.config.mjs',
+      'react-client.config.js',
     ];
 
     let configFile: string | null = null;
     for (const name of filenames) {
       const file = path.join(projectRoot, name);
-      if (fs.existsSync(file)) {
+      if (await fs.pathExists(file)) {
         configFile = file;
         break;
       }
     }
 
     if (!configFile) {
-      console.log(chalk.gray('ℹ️ No react-client.config.js found, using defaults.'));
+      console.log(chalk.gray('ℹ️ No react-client.config found, using defaults.'));
       return {};
     }
 
-    // 🧩 Import dynamically using file://
-    const fileUrl = pathToFileURL(configFile).href;
+    const ext = path.extname(configFile);
+    const tempFile = path.join(projectRoot, `.react-client.temp-${Date.now()}.mjs`);
 
-    // If TypeScript file, try to compile it temporarily using esbuild
-    if (configFile.endsWith('.ts')) {
-      const esbuild = await import('esbuild');
-      const outFile = path.join(projectRoot, '.react-client.temp.config.js');
-      await esbuild.build({
+    // 🧠 Always compile .ts or .js → .mjs for safe ESM import
+    if (ext === '.ts' || ext === '.js') {
+      await build({
         entryPoints: [configFile],
-        outfile: outFile,
-        format: 'esm',
+        outfile: tempFile,
         platform: 'node',
+        format: 'esm',
+        target: 'node18',
         bundle: true,
         write: true,
+        logLevel: 'silent',
       });
-      const mod = await import(pathToFileURL(outFile).href);
-      await fs.remove(outFile);
-      console.log(chalk.green(`🧩 Loaded config from ${path.basename(configFile)}`));
-      return mod.default || mod;
+    } else {
+      await fs.copyFile(configFile, tempFile);
     }
 
-    // Normal .js or .mjs import
+    // Import via file:// URL
+    const fileUrl = pathToFileURL(tempFile).href;
     const mod = await import(fileUrl);
+    await fs.remove(tempFile);
+
+    const config = mod.default || mod;
     console.log(chalk.green(`🧩 Loaded config from ${path.basename(configFile)}`));
-    return mod.default || mod;
+    return config as ReactClientConfig;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(chalk.red(`❌ Failed to load react-client.config: ${msg}`));
-    return {} as ReactClientConfig;
+    console.error(
+      chalk.red(`❌ Could not load config (${path.join(cwd, 'react-client.config.js')}): ${msg}`),
+    );
+    return {};
   }
 }
