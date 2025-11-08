@@ -128,7 +128,12 @@ export default async function dev() {
 
   // 2️⃣ Bare module resolver with memory cache
   app.use('/@modules/', async (req, res, next) => {
-    const id = req.url?.replace(/^\/@modules\//, '');
+    let id = req.url?.replace(/^\/@modules\//, '');
+    if (!id) return next();
+
+    // 🧩 Normalize: remove leading slashes that may appear (e.g. "/react")
+    id = id.replace(/^\/+/, '');
+
     if (!id) return next();
 
     if (moduleCache.has(id)) {
@@ -172,8 +177,9 @@ export default async function dev() {
       const ext = path.extname(filePath).toLowerCase();
 
       // 🪄 Rewrite bare imports → /@modules/
+      // 🧩 Rewrite *only bare imports* like "react", not "./" or "/" or "../"
       code = code.replace(
-        /from\s+['"]([^'".\/][^'"]*)['"]/g,
+        /from\s+['"]((?![\.\/])[a-zA-Z0-9@/_-]+)['"]/g,
         (_match, dep) => `from "/@modules/${dep}"`,
       );
 
