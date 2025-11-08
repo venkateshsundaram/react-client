@@ -1,22 +1,22 @@
-import esbuild from "esbuild";
-import path from "path";
-import fs from "fs-extra";
-import chalk from "chalk";
-import { loadReactClientConfig } from "../../utils/loadConfig";
+import esbuild from 'esbuild';
+import path from 'path';
+import fs from 'fs-extra';
+import chalk from 'chalk';
+import { loadReactClientConfig } from '../../utils/loadConfig';
 
 export default async function build() {
   const root = process.cwd();
   const config = await loadReactClientConfig(root);
-  const appRoot = path.resolve(root, config.root || ".");
-  const outDir = path.join(appRoot, config.build?.outDir || ".react-client/build");
+  const appRoot = path.resolve(root, config.root || '.');
+  const outDir = path.join(appRoot, config.build?.outDir || '.react-client/build');
 
   console.log(chalk.cyan(`\n🏗️ Building project...`));
   console.log(chalk.gray(`Root: ${appRoot}`));
   console.log(chalk.gray(`Output: ${outDir}\n`));
 
-  const entry = path.join(appRoot, "src", "main.tsx");
+  const entry = path.join(appRoot, 'src', 'main.tsx');
   if (!fs.existsSync(entry)) {
-    console.error(chalk.red("❌ Entry not found: src/main.tsx"));
+    console.error(chalk.red('❌ Entry not found: src/main.tsx'));
     process.exit(1);
   }
 
@@ -29,8 +29,8 @@ export default async function build() {
       minify: true,
       sourcemap: true,
       outdir: outDir,
-      define: { "process.env.NODE_ENV": '"production"' },
-      loader: { ".ts": "ts", ".tsx": "tsx", ".js": "jsx", ".jsx": "jsx" },
+      define: { 'process.env.NODE_ENV': '"production"' },
+      loader: { '.ts': 'ts', '.tsx': 'tsx', '.js': 'jsx', '.jsx': 'jsx' },
     });
 
     console.log(chalk.green(`✅ Build completed successfully!`));

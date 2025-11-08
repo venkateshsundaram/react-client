@@ -13,7 +13,9 @@ import previewCmd from './commands/preview';
 
 // Load package.json version dynamically
 const pkgPath = path.resolve(__dirname, '../../package.json');
-const pkg = fs.existsSync(pkgPath) ? JSON.parse(fs.readFileSync(pkgPath, 'utf8')) : { version: '0.0.0' };
+const pkg = fs.existsSync(pkgPath)
+  ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+  : { version: '0.0.0' };
 
 // 🧠 Fancy startup banner
 function showBanner(cmd?: string) {

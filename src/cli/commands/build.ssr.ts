@@ -1,22 +1,22 @@
-import esbuild from "esbuild";
-import path from "path";
-import fs from "fs-extra";
-import chalk from "chalk";
-import { loadReactClientConfig } from "../../utils/loadConfig";
+import esbuild from 'esbuild';
+import path from 'path';
+import fs from 'fs-extra';
+import chalk from 'chalk';
+import { loadReactClientConfig } from '../../utils/loadConfig';
 
 export default async function buildSsr() {
   const root = process.cwd();
   const config = await loadReactClientConfig(root);
-  const appRoot = path.resolve(root, config.root || ".");
-  const outDir = path.join(appRoot, config.build?.outDir || ".react-client/ssr");
+  const appRoot = path.resolve(root, config.root || '.');
+  const outDir = path.join(appRoot, config.build?.outDir || '.react-client/ssr');
 
   console.log(chalk.cyan(`\n🧱 Building SSR bundle...`));
   console.log(chalk.gray(`Root: ${appRoot}`));
   console.log(chalk.gray(`Output: ${outDir}\n`));
 
-  const entry = path.join(appRoot, "src", "server.tsx");
+  const entry = path.join(appRoot, 'src', 'server.tsx');
   if (!fs.existsSync(entry)) {
-    console.error(chalk.red("❌ SSR entry not found: src/server.tsx"));
+    console.error(chalk.red('❌ SSR entry not found: src/server.tsx'));
     process.exit(1);
   }
 
@@ -26,13 +26,13 @@ export default async function buildSsr() {
     await esbuild.build({
       entryPoints: [entry],
       bundle: true,
-      platform: "node",
-      format: "esm",
-      target: "node18",
-      external: ["react", "react-dom"],
+      platform: 'node',
+      format: 'esm',
+      target: 'node18',
+      external: ['react', 'react-dom'],
       outdir: outDir,
-      define: { "process.env.NODE_ENV": '"production"' },
-      loader: { ".ts": "ts", ".tsx": "tsx" },
+      define: { 'process.env.NODE_ENV': '"production"' },
+      loader: { '.ts': 'ts', '.tsx': 'tsx' },
     });
 
     console.log(chalk.green(`✅ SSR build completed successfully!`));
