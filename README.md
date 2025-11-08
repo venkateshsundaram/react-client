@@ -35,7 +35,7 @@ npm install
 npm run dev
 ```
 
-This launches the **custom dev server** — not Vite — built on **Connect + WebSocket + esbuild**, featuring:
+This launches the **custom dev server** — built on **Connect + WebSocket + esbuild**, featuring:
 - Instant rebuilds  
 - React Fast Refresh (HMR)  
 - Auto port detection & confirmation prompt  
@@ -85,9 +85,9 @@ Each template is pre-configured for esbuild, HMR, and fast bootstrapping.
 
 ## 💎 Core Features
 
-- ⚡ **Custom Dev Server (no Vite)** — Connect + WebSocket + esbuild  
+- ⚡ **Custom Dev Server** — Connect + WebSocket + esbuild  
 - 🔁 **React Fast Refresh (HMR)** — State-preserving reloads  
-- 💥 **Vite-style Overlay** — Syntax-highlighted stack frames, clickable file links (`vscode://file`)  
+- 💥 **Overlay** — Syntax-highlighted stack frames, clickable file links (`vscode://file`)  
 - 🔍 **Source Map Stack Mapping** — Maps runtime errors to original TS/JS source lines  
 - 💬 **Auto Port Detection** — Prompts when default port 5173 is occupied  
 - 🧠 **Smart Config Loader** — Detects project root, compiles `.ts` configs dynamically  
