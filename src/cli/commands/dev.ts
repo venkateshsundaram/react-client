@@ -22,7 +22,7 @@ interface HMRMessage {
 export default async function dev() {
   const root = process.cwd();
 
-  // 🧩 Load config
+  // 🧩 Load user config
   const userConfig = await loadReactClientConfig(root);
   const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = userConfig.server?.port || 5173;
@@ -40,7 +40,7 @@ export default async function dev() {
   const indexHtml = path.join(appRoot, 'index.html');
   await fs.ensureDir(outDir);
 
-  // 🧠 Detect open port
+  // ⚙️ Detect open port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
 
@@ -82,7 +82,7 @@ export default async function dev() {
 
   const reactRefreshRuntime = safeResolveReactRefresh();
 
-  // 🏗️ esbuild context
+  // 🏗️ Create esbuild context
   const ctx = await esbuild.context({
     entryPoints: [entry],
     bundle: true,
@@ -100,7 +100,7 @@ export default async function dev() {
   console.log(chalk.gray('   Output dir:'), chalk.blue(outDir));
   console.log(chalk.gray('   Entry file:'), chalk.yellow(entry));
 
-  // 🌐 connect server
+  // 🌐 Connect server setup
   const app = connect();
 
   // 🛡 Security headers
@@ -110,11 +110,13 @@ export default async function dev() {
     next();
   });
 
+  // 🧠 In-memory cache for /@modules
+  const moduleCache = new Map<string, string>();
+
   // 1️⃣ Serve react-refresh runtime with safe browser shim
   app.use('/@react-refresh', async (_req, res) => {
     const runtime = await fs.readFile(reactRefreshRuntime, 'utf8');
     const shim = `
-      // React Refresh browser shims
       window.process = window.process || { env: { NODE_ENV: 'development' } };
       window.module = { exports: {} };
       window.global = window;
@@ -124,31 +126,41 @@ export default async function dev() {
     res.end(shim + '\n' + runtime);
   });
 
-  // 2️⃣ Minimal bare import resolver (/@modules/)
+  // 2️⃣ Bare module resolver with memory cache
   app.use('/@modules/', async (req, res, next) => {
     const id = req.url?.replace(/^\/@modules\//, '');
     if (!id) return next();
 
+    if (moduleCache.has(id)) {
+      res.setHeader('Content-Type', 'application/javascript');
+      res.end(moduleCache.get(id));
+      return;
+    }
+
     try {
-      const entry = require.resolve(id, { paths: [appRoot] });
+      const entryPath = require.resolve(id, { paths: [appRoot] });
       const out = await esbuild.build({
-        entryPoints: [entry],
+        entryPoints: [entryPath],
         bundle: true,
         write: false,
         platform: 'browser',
         format: 'esm',
         target: 'es2020',
       });
+
+      const code = out.outputFiles[0].text;
+      moduleCache.set(id, code); // ✅ cache module
       res.setHeader('Content-Type', 'application/javascript');
-      res.end(out.outputFiles[0].text);
+      res.end(code);
     } catch (err: unknown) {
-      console.error('Failed to resolve module', id, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`Failed to resolve module ${id}: ${msg}`));
       res.writeHead(500);
       res.end(`// Could not resolve module ${id}`);
     }
   });
 
-  // 3️⃣ Serve /src/* files (on-the-fly transform)
+  // 3️⃣ Serve /src/* files — on-the-fly transform + bare import rewrite
   app.use(async (req, res, next) => {
     if (!req.url || !req.url.startsWith('/src/')) return next();
 
@@ -156,8 +168,14 @@ export default async function dev() {
       const filePath = path.join(appRoot, decodeURIComponent(req.url.split('?')[0]));
       if (!(await fs.pathExists(filePath))) return next();
 
-      const code = await fs.readFile(filePath, 'utf8');
+      let code = await fs.readFile(filePath, 'utf8');
       const ext = path.extname(filePath).toLowerCase();
+
+      // 🪄 Rewrite bare imports → /@modules/
+      code = code.replace(
+        /from\s+['"]([^'".\/][^'"]*)['"]/g,
+        (_match, dep) => `from "/@modules/${dep}"`,
+      );
 
       let loader: esbuild.Loader = 'js';
       if (ext === '.ts') loader = 'ts';
@@ -177,7 +195,7 @@ export default async function dev() {
       res.end(transformed.code);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error('Error serving src file:', msg);
+      console.error('Error serving /src file:', msg);
       res.writeHead(500);
       res.end(`// Error: ${msg}`);
     }
@@ -193,7 +211,6 @@ export default async function dev() {
       }
 
       let html = await fs.readFile(indexHtml, 'utf8');
-
       html = html.replace(
         '</body>',
         `
@@ -233,7 +250,7 @@ export default async function dev() {
     }
   });
 
-  // 🔁 HMR via WebSocket
+  // 🔁 HMR WebSocket server
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
@@ -256,6 +273,7 @@ export default async function dev() {
     }
   });
 
+  // 🟢 Start server
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
     console.log(chalk.cyan.bold(`\n🚀 React Client Dev Server`));
