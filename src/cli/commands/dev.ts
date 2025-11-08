@@ -21,7 +21,7 @@ export default async function dev() {
   const cacheDir = path.join(appRoot, '.react-client', 'deps');
   await fs.ensureDir(cacheDir);
 
-  // Detect entry dynamically (main.tsx or main.jsx)
+  // 🔍 Dynamically detect entry (main.tsx or main.jsx)
   const possibleEntries = ['src/main.tsx', 'src/main.jsx'];
   const entry = possibleEntries.map((p) => path.join(appRoot, p)).find((p) => fs.existsSync(p));
   if (!entry) {
@@ -31,7 +31,7 @@ export default async function dev() {
 
   const indexHtml = path.join(appRoot, 'index.html');
 
-  // Detect open port
+  // 🧭 Port selection
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
@@ -47,7 +47,7 @@ export default async function dev() {
     }
   }
 
-  // ⚡ React-refresh runtime auto install
+  // ⚡ Ensure react-refresh runtime installed
   function safeResolveReactRefresh(): string {
     try {
       return require.resolve('react-refresh/runtime');
@@ -60,24 +60,22 @@ export default async function dev() {
       return require.resolve('react-refresh/runtime');
     }
   }
+  void safeResolveReactRefresh();
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _reactRefreshRuntime = safeResolveReactRefresh();
-
-  // --- Plugins (core + user)
+  // 🧩 Core + user plugins
   const corePlugins: ReactClientPlugin[] = [
     {
       name: 'css-hmr',
-      async onTransform(code: string, id: string): Promise<string> {
+      async onTransform(code, id) {
         if (id.endsWith('.css')) {
           const escaped = JSON.stringify(code);
           return `
-          const css = ${escaped};
-          const style = document.createElement('style');
-          style.textContent = css;
-          document.head.appendChild(style);
-          import.meta.hot && import.meta.hot.accept();
-        `;
+            const css = ${escaped};
+            const style = document.createElement('style');
+            style.textContent = css;
+            document.head.appendChild(style);
+            import.meta.hot && import.meta.hot.accept();
+          `;
         }
         return code;
       },
@@ -87,19 +85,17 @@ export default async function dev() {
   const userPlugins = Array.isArray(userConfig.plugins) ? userConfig.plugins : [];
   const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
 
-  // 🧱 Connect app
+  // 🌐 Connect app + caches
   const app = connect();
   const transformCache = new Map<string, string>();
 
-  // --- Prebundle persistent deps
-  async function prebundleDeps(): Promise<void> {
+  // 📦 Prebundle persistent deps
+  async function prebundleDeps() {
     const pkgFile = path.join(appRoot, 'package.json');
     if (!fs.existsSync(pkgFile)) return;
-
     const pkg = JSON.parse(await fs.readFile(pkgFile, 'utf8')) as {
       dependencies?: Record<string, string>;
     };
-
     const deps = Object.keys(pkg.dependencies || {});
     if (!deps.length) return;
 
@@ -122,15 +118,15 @@ export default async function dev() {
           target: 'es2020',
         });
         console.log(chalk.green(`✅ Cached ${dep}`));
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(chalk.yellow(`⚠️ Skipped ${dep}: ${msg}`));
+      } catch (err) {
+        const e = err as Error;
+        console.warn(chalk.yellow(`⚠️ Skipped ${dep}: ${e.message}`));
       }
     }
   }
   await prebundleDeps();
 
-  // --- Serve prebundled modules
+  // --- Serve prebundled modules (fixed resolver)
   app.use('/@modules/', async (req, res, next) => {
     const id = req.url?.replace(/^\/@modules\//, '');
     if (!id) return next();
@@ -142,7 +138,21 @@ export default async function dev() {
         return res.end(await fs.readFile(cacheFile));
       }
 
-      const entryPath = require.resolve(id, { paths: [appRoot] });
+      let entryPath: string | null = null;
+      try {
+        entryPath = require.resolve(id, { paths: [path.join(appRoot, 'node_modules')] });
+      } catch {
+        try {
+          entryPath = require.resolve(id, { paths: [root] });
+        } catch {
+          if (id === 'react') entryPath = require.resolve('react');
+          else if (id === 'react-dom' || id === 'react-dom/client')
+            entryPath = require.resolve('react-dom');
+        }
+      }
+
+      if (!entryPath) throw new Error(`Could not resolve ${id}`);
+
       const result = await esbuild.build({
         entryPoints: [entryPath],
         bundle: true,
@@ -153,6 +163,8 @@ export default async function dev() {
       });
 
       let code = result.outputFiles[0].text;
+
+      // ✅ Fix for react-dom/client exports
       if (id === 'react-dom/client') {
         code += `
           import * as ReactDOMClient from '/@modules/react-dom';
@@ -164,17 +176,28 @@ export default async function dev() {
       await fs.writeFile(cacheFile, code, 'utf8');
       res.setHeader('Content-Type', 'application/javascript');
       res.end(code);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch (err) {
+      const e = err as Error;
+      console.error(chalk.red(`❌ Failed to load module ${id}: ${e.message}`));
       res.writeHead(500);
-      res.end(`// Failed to resolve module ${id}: ${msg}`);
+      res.end(`// Failed to resolve module ${id}: ${e.message}`);
     }
   });
 
-  // --- Serve /src files dynamically
+  // --- Serve /src files dynamically (auto extension fallback)
   app.use(async (req, res, next) => {
     if (!req.url || (!req.url.startsWith('/src/') && !req.url.endsWith('.css'))) return next();
-    const filePath = path.join(appRoot, decodeURIComponent(req.url.split('?')[0]));
+    const rawPath = decodeURIComponent(req.url.split('?')[0]);
+    let filePath = path.join(appRoot, rawPath);
+
+    const possibleExts = ['', '.tsx', '.ts', '.jsx', '.js'];
+    for (const ext of possibleExts) {
+      if (await fs.pathExists(filePath + ext)) {
+        filePath += ext;
+        break;
+      }
+    }
+
     if (!(await fs.pathExists(filePath))) return next();
 
     try {
@@ -185,7 +208,7 @@ export default async function dev() {
 
       let code = await fs.readFile(filePath, 'utf8');
 
-      // 🧩 Rewrite bare imports (react, react-dom, etc.) to /@modules/*
+      // Rewrite bare imports → /@modules/*
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_match, dep) => `from "/@modules/${dep}"`)
         .replace(
@@ -193,10 +216,7 @@ export default async function dev() {
           (_match, dep) => `import("/@modules/${dep}")`,
         );
 
-      // Run plugin transforms
-      for (const p of plugins) {
-        if (p.onTransform) code = await p.onTransform(code, filePath);
-      }
+      for (const p of plugins) if (p.onTransform) code = await p.onTransform(code, filePath);
 
       const ext = path.extname(filePath);
       let loader: esbuild.Loader = 'js';
@@ -209,17 +229,19 @@ export default async function dev() {
         sourcemap: 'inline',
         target: 'es2020',
       });
+
       transformCache.set(filePath, result.code);
       res.setHeader('Content-Type', 'application/javascript');
       res.end(result.code);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch (err) {
+      const e = err as Error;
+      console.error(chalk.red(`⚠️ Transform failed: ${e.message}`));
       res.writeHead(500);
-      res.end(`// Error: ${msg}`);
+      res.end(`// Error: ${e.message}`);
     }
   });
 
-  // --- Serve index.html with overlay + HMR client
+  // --- Serve index.html + overlay + HMR client
   app.use(async (req, res, next) => {
     if (req.url !== '/' && req.url !== '/index.html') return next();
     if (!fs.existsSync(indexHtml)) {
@@ -281,7 +303,7 @@ export default async function dev() {
     transformCache.delete(file);
 
     for (const p of plugins) {
-      p.onHotUpdate?.(file, {
+      await p.onHotUpdate?.(file, {
         broadcast: (msg: HMRMessage) => broadcaster.broadcast(msg),
       });
     }
@@ -292,7 +314,7 @@ export default async function dev() {
     });
   });
 
-  // 🚀 Launch
+  // 🚀 Start server
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
     console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
