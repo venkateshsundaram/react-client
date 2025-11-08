@@ -1,42 +1,61 @@
 {
   "name": "react-client",
   "version": "1.0.7",
-  "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration. It is designed to be esbuild-based, Node-native, and modular like Vite/Next.js with SSR, HMR, Tailwind, CSS Modules, and generators.",
+  "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration. Esbuild-based, Node-native, and modular like Vite/Next.js with SSR, HMR, Tailwind, CSS Modules, and generators.",
+  "license": "MIT",
+  "author": "Venkatesh Sundaram",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/venkateshsundaram/react-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/venkateshsundaram/react-client/issues"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "react-client": "dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./config": {
+      "import": "./dist/config.js",
+      "require": "./dist/config.js",
+      "types": "./dist/config.d.ts"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "config": [
+        "dist/config.d.ts"
+      ]
+    }
+  },
   "sideEffects": false,
   "files": [
     "dist",
     "templates"
   ],
-  "bin": "dist/cli/index.js",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/venkateshsundaram/react-client.git"
-  },
-  "keywords": [
-    "react",
-    "javascript",
-    "typescript",
-    "cli",
-    "react-cli",
-    "react-client",
-    "ssr",
-    "esbuild",
-    "tailwind",
-    "css-modules",
-    "hmr",
-    "framework",
-    "tooling"
-  ],
-  "author": "venkateshsundaram",
-  "license": "MIT",
   "workspaces": [
     "templates/*"
   ],
-  "bugs": {
-    "url": "https://github.com/venkateshsundaram/react-client/issues"
-  },
+  "keywords": [
+    "react",
+    "typescript",
+    "cli",
+    "react-cli",
+    "framework",
+    "hmr",
+    "ssr",
+    "esbuild",
+    "tooling",
+    "vite-alternative",
+    "fast-refresh"
+  ],
   "scripts": {
     "clean": "rm -rf dist",
     "compile": "tsc -p tsconfig.build.json",
@@ -54,29 +73,49 @@
     "test": "jest",
     "typecheck": "tsc --noEmit"
   },
-  "husky": {
-    "hooks": {
-      "pre-commit": "lint-staged"
-    }
-  },
   "lint-staged": {
     "*.ts": [
       "eslint --fix",
       "prettier --write"
     ]
   },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
   "commitlint": {
     "extends": [
       "@commitlint/config-conventional"
     ]
   },
+  "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "chalk": "^4.1.2",
+    "chokidar": "^4.0.3",
+    "commander": "^14.0.2",
+    "connect": "^3.7.0",
+    "detect-port": "^2.1.0",
+    "esbuild": "^0.25.12",
+    "fs-extra": "^11.3.2",
+    "open": "^8.4.2",
+    "prismjs": "^1.30.0",
+    "prompts": "^2.4.2",
+    "react-refresh": "^0.14.0",
+    "serve-static": "^1.15.0",
+    "ws": "^8.18.3"
+  },
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",
     "@commitlint/config-conventional": "^19.8.0",
     "@types/commander": "^2.12.0",
+    "@types/connect": "^3.4.38",
     "@types/fs-extra": "^9.0.13",
     "@types/jest": "^29.0.0",
     "@types/node": "^18.0.0",
+    "@types/prompts": "^2.4.9",
+    "@types/serve-static": "^1.15.5",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
     "eslint": "^8.0.0",
@@ -90,10 +129,5 @@
     "standard-version": "^9.5.0",
     "ts-jest": "^29.0.0",
     "typescript": "^5.3.0"
-  },
-  "dependencies": {
-    "commander": "^14.0.2",
-    "esbuild": "^0.25.12",
-    "fs-extra": "^11.3.2"
   }
 }

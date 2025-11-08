@@ -1,61 +1,98 @@
-import fs from 'fs-extra';
-import path from 'path';
+import path from "path";
+import fs from "fs-extra";
+import prompts from "prompts";
+import chalk from "chalk";
+import { execSync } from "child_process";
+import { InitOptions } from "../types.js";
 
-type InitOptions = {
-  template?: string;
-  withConfig?: boolean;
-};
+export default async function initCmd(name: string, opts: InitOptions) {
+  const root = process.cwd();
+  const projectDir = path.resolve(root, name);
+  const template = opts.template || "react-ts";
 
-export default async function init(name: string, opts: InitOptions = {}) {
-  const root = path.resolve(process.cwd(), name);
-  const template = opts.template || 'react-ts';
-  await fs.ensureDir(root);
-  // Resolve templates directory by walking up from __dirname until we find a
-  // `templates` folder. This handles different install layouts (local dev,
-  // global install, packaged dist) transparently.
-  let cur = __dirname;
-  let tplDir: string | null = null;
-  while (true) {
-    const candidate = path.join(cur, 'templates');
-    if (fs.existsSync(candidate)) {
-      tplDir = candidate;
-      break;
+  console.log(chalk.cyan(`\n📦 Creating new React Client app: ${chalk.bold(name)}`));
+
+  // 1️⃣ Check if directory exists
+  if (fs.existsSync(projectDir)) {
+    const res = await prompts({
+      type: "confirm",
+      name: "overwrite",
+      message: chalk.yellow(`Directory "${name}" already exists. Overwrite?`),
+      initial: false,
+    });
+    if (!res.overwrite) {
+      console.log(chalk.red("❌ Operation cancelled."));
+      process.exit(1);
     }
-    const parent = path.dirname(cur);
-    if (parent === cur) break; // reached filesystem root
-    cur = parent;
+    await fs.remove(projectDir);
   }
-  if (!tplDir) {
-    console.error('Templates directory not found in package layout');
+
+  await fs.ensureDir(projectDir);
+
+  // 2️⃣ Locate template
+  const templateDir = path.resolve(__dirname, "../../../templates", template);
+  if (!fs.existsSync(templateDir)) {
+    console.error(chalk.red(`❌ Template not found: ${template}`));
     process.exit(1);
   }
-  const tpl = path.join(tplDir, template);
-  if (!fs.existsSync(tpl)) {
-    console.error('Template not found:', template);
-    process.exit(1);
-  }
-  await fs.copy(tpl, root);
-  // If the template contains a package.json, update its name field to the
-  // user provided project name so the scaffolded project has the correct
-  // package identity.
-  const pkgPath = path.join(root, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const raw = await fs.readFile(pkgPath, 'utf8');
-      const pkg = JSON.parse(raw);
-      // Use the final directory name as the package name so users can pass
-      // either a simple name ("myapp") or a path ("/abs/path/myapp").
-      pkg.name = path.basename(root);
-      // If template marks package private, leave it as-is; do not force publish.
-      await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-    } catch (err) {
-      // Non-fatal: log and continue
-      console.warn('Warning: could not update package.json name for template:', err);
-    }
-  }
+
+  // 3️⃣ Copy template
+  console.log(chalk.gray(`\n📁 Copying template: ${template}...`));
+  await fs.copy(templateDir, projectDir);
+
+  // 4️⃣ Optionally create react-client.config.js (not .ts)
   if (opts.withConfig) {
-    const cfg = "import { defineConfig } from 'react-client';\nexport default defineConfig({});\n";
-    await fs.writeFile(path.join(root, 'react-client.config.ts'), cfg, 'utf8');
+    const configPath = path.join(projectDir, "react-client.config.js");
+    if (!fs.existsSync(configPath)) {
+      const configContent = `// react-client.config.js
+import { defineConfig } from 'react-client/config';
+
+export default defineConfig({
+  // 🧭 Root directory for the app
+  root: './src',
+
+  // ⚡ Dev server settings
+  server: {
+    port: 5173,
+  },
+
+  // 🏗️ Build options
+  build: {
+    outDir: '.react-client/build',
+  },
+
+  // 💡 Add plugins, aliases, etc.
+});
+`;
+      await fs.writeFile(configPath, configContent, "utf8");
+      console.log(chalk.green("📝 Created react-client.config.js"));
+    }
   }
-  console.log('Project created at', root);
+
+  // 5️⃣ Initialize git repo
+  try {
+    execSync("git init", { cwd: projectDir, stdio: "ignore" });
+    console.log(chalk.gray("🔧 Initialized Git repository."));
+  } catch {
+    console.warn(chalk.yellow("⚠️ Git init failed (skipping)."));
+  }
+
+  // 6️⃣ Install dependencies
+  const pkgManager = /yarn/.test(process.env.npm_execpath || "") ? "yarn" : "npm";
+  console.log(chalk.gray(`\n📦 Installing dependencies using ${pkgManager}...`));
+
+  try {
+    execSync(`${pkgManager} install`, { cwd: projectDir, stdio: "inherit" });
+  } catch {
+    console.warn(chalk.yellow("⚠️ Dependency installation failed, please run manually."));
+  }
+
+  // 7️⃣ Completion message
+  console.log();
+  console.log(chalk.green("✅ Project setup complete!"));
+  console.log(chalk.cyan(`\nNext steps:`));
+  console.log(chalk.gray(`  cd ${name}`));
+  console.log(chalk.gray(`  ${pkgManager === "yarn" ? "yarn dev" : "npm run dev"}`));
+  console.log();
+  console.log(chalk.dim("Happy coding! ⚡"));
 }
