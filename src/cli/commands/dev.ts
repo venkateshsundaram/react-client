@@ -89,9 +89,15 @@ export default async function dev() {
     outdir: outDir,
     define: { 'process.env.NODE_ENV': '"development"' },
     loader: { '.ts': 'ts', '.tsx': 'tsx', '.js': 'jsx', '.jsx': 'jsx' },
+    entryNames: '[name]', // ✅ output main.js (not src/main.js)
+    assetNames: 'assets/[name]',
   });
 
   await ctx.watch();
+
+  console.log(chalk.gray('📦 Watching and building dev bundle...'));
+  console.log(chalk.gray('   Output dir:'), chalk.blue(outDir));
+  console.log(chalk.gray('   Entry file:'), chalk.yellow(entry));
 
   // 🌐 connect server
   const app = connect();
@@ -103,20 +109,21 @@ export default async function dev() {
     next();
   });
 
-  // 1️⃣ Serve react-refresh runtime with browser-safe shim
+  // 1️⃣ Serve react-refresh runtime with safe browser shim
   app.use('/@react-refresh', async (_req, res) => {
     const runtime = await fs.readFile(reactRefreshRuntime, 'utf8');
     const shim = `
       // React Refresh browser shims
       window.process = window.process || { env: { NODE_ENV: 'development' } };
       window.module = { exports: {} };
-      window.global = window; // ensure global scope for refresh
+      window.global = window;
+      window.require = () => window.module.exports;
     `;
     res.setHeader('Content-Type', 'application/javascript');
     res.end(shim + '\n' + runtime);
   });
 
-  // 2️⃣ Serve PrismJS (for code frame overlay)
+  // 2️⃣ Serve PrismJS for code highlighting (overlay)
   app.use('/@prismjs', async (_req, res) => {
     const prismPath = require.resolve('prismjs/prism.js');
     const css = await fs.readFile(require.resolve('prismjs/themes/prism-tomorrow.css'), 'utf8');
@@ -187,7 +194,7 @@ export default async function dev() {
     }
   });
 
-  // 4️⃣ Serve HTML and inject overlay + HMR
+  // 4️⃣ Serve index.html with injected refresh + HMR
   app.use(async (req, res, next) => {
     if (req.url === '/' || req.url === '/index.html') {
       if (!fs.existsSync(indexHtml)) {
@@ -198,12 +205,9 @@ export default async function dev() {
 
       let html = await fs.readFile(indexHtml, 'utf8');
 
-      // Ensure main entry reference
-      html = html.replace(/<script[^>]*src="\/bundle\.js"[^>]*><\/script>/, '');
       html = html.replace(
         '</body>',
         `
-        <script type="module" src="/main.js"></script>
         <script type="module">
           import "/@react-refresh";
           import "/@prismjs";
@@ -231,7 +235,15 @@ export default async function dev() {
 
       res.setHeader('Content-Type', 'text/html');
       res.end(html);
-    } else next();
+    } else {
+      // ✅ Serve compiled output files
+      const filePath = path.join(outDir, req.url || '');
+      if (await fs.pathExists(filePath)) {
+        const content = await fs.readFile(filePath);
+        res.setHeader('Content-Type', 'application/javascript');
+        res.end(content);
+      } else next();
+    }
   });
 
   const server = http.createServer(app);
