@@ -184,6 +184,16 @@ export default async function dev() {
       }
 
       let code = await fs.readFile(filePath, 'utf8');
+
+      // 🧩 Rewrite bare imports (react, react-dom, etc.) to /@modules/*
+      code = code
+        .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_match, dep) => `from "/@modules/${dep}"`)
+        .replace(
+          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
+          (_match, dep) => `import("/@modules/${dep}")`,
+        );
+
+      // Run plugin transforms
       for (const p of plugins) {
         if (p.onTransform) code = await p.onTransform(code, filePath);
       }
