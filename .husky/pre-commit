@@ -1,2 +1,16 @@
 #!/bin/sh
-npx lint-staged
+. "$(dirname "$0")/_/husky.sh"
+
+echo "🔍 Running pre-commit checks (Prettier + ESLint)..."
+
+# Run lint-staged (configured in package.json)
+npm run precommit
+
+status=$?
+
+if [ $status -eq 0 ]; then
+  echo "✅ All staged files formatted and linted successfully!"
+else
+  echo "❌ Pre-commit checks failed. Please fix issues and re-commit."
+  exit 1
+fi

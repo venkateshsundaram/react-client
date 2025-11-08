@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import path from 'path';
+import fs from 'fs-extra';
+import chalk from 'chalk';
 import initCmd from './commands/init';
 import generateCmd from './commands/generate';
 import { InitOptions, GenerateOptions } from './types';
@@ -7,37 +10,135 @@ import devCmd from './commands/dev';
 import buildCmd from './commands/build';
 import buildSsrCmd from './commands/build.ssr';
 import previewCmd from './commands/preview';
+
+// Load package.json version dynamically
+const pkgPath = path.resolve(__dirname, '../../package.json');
+const pkg = fs.existsSync(pkgPath)
+  ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+  : { version: '0.0.0' };
+
+// 🧠 Fancy startup banner
+function showBanner(cmd?: string) {
+  const title = chalk.bold.cyan('⚡ React Client');
+  const version = chalk.gray(`v${pkg.version}`);
+  const tagline = chalk.dim('Fast esbuild-based React CLI with HMR, SSR & Overlay');
+  const line = chalk.gray('──────────────────────────────────────────────────────────────');
+
+  console.log(`\n${title} ${version}`);
+  console.log(tagline);
+  console.log(line);
+
+  switch (cmd) {
+    case 'init':
+      console.log(chalk.cyan('📦 Initializing new React project...\n'));
+      break;
+    case 'generate':
+      console.log(chalk.white('✨ Generating boilerplate files...\n'));
+      break;
+    case 'dev':
+      console.log(chalk.green('🚀 Starting development server...\n'));
+      break;
+    case 'build':
+      console.log(chalk.yellow('🏗️  Building for production...\n'));
+      break;
+    case 'build:ssr':
+      console.log(chalk.magenta('🧱 Building for server-side rendering (SSR)...\n'));
+      break;
+    case 'preview':
+      console.log(chalk.blue('🌐 Starting production preview server...\n'));
+      break;
+    default:
+      console.log();
+  }
+}
+
+// 🧩 Commander setup
 const program = new Command();
-program.name('react-client').version('1.0.0').description('react-client CLI');
+
+program
+  .name('react-client')
+  .description('react-client CLI – A lightweight React toolkit for fast builds & dev server')
+  .version(pkg.version, '-v, --version', 'display version information');
+
+// ------------------------------------------------------
+// CLI Commands
+// ------------------------------------------------------
+
 program
   .command('init <name>')
-  .option('-t,--template <template>', 'template', 'react-ts')
-  .option('--with-config', 'create config')
-  .action((name: string, opts: InitOptions) => initCmd(name, opts));
+  .option('-t, --template <template>', 'choose a template', 'react-ts')
+  .option('--with-config', 'create a config file')
+  .description('initialize a new React project')
+  .action((name: string, opts: InitOptions) => {
+    showBanner('init');
+    initCmd(name, opts);
+  });
+
 program
   .command('generate <kind> <name>')
-  .option('-p,--path <path>', 'path')
-  .option('--no-ts', 'generate JS')
-  .option('-f,--force', 'force')
-  .action((k: string, n: string, o: GenerateOptions) => generateCmd(k, n, o));
+  .alias('g')
+  .option('-p, --path <path>', 'output path')
+  .option('--no-ts', 'generate JS instead of TS')
+  .option('-f, --force', 'overwrite if exists')
+  .description('generate components, pages, or stores')
+  .action((kind: string, name: string, opts: GenerateOptions) => {
+    showBanner('generate');
+    generateCmd(kind, name, opts);
+  });
+
 program
   .command('dev')
-  .description('start dev server')
-  .action(() => devCmd());
+  .description('start dev server (with React Fast Refresh)')
+  .action(() => {
+    showBanner('dev');
+    devCmd();
+  });
+
 program
   .command('build')
-  .description('build app')
-  .action(() => buildCmd());
+  .description('build production assets')
+  .action(() => {
+    showBanner('build');
+    buildCmd();
+  });
+
 program
   .command('build:ssr')
-  .description('build ssr')
-  .action(() => buildSsrCmd());
+  .description('build for server-side rendering (SSR)')
+  .action(() => {
+    showBanner('build:ssr');
+    buildSsrCmd();
+  });
+
 program
   .command('preview')
-  .description('preview build')
-  .action(() => previewCmd());
-// Only parse argv when executed directly as a CLI, not when imported by tests or other code.
+  .description('preview production build')
+  .action(() => {
+    showBanner('preview');
+    previewCmd();
+  });
+
+// ------------------------------------------------------
+// Default / Unknown command handling
+// ------------------------------------------------------
+program.on('command:*', () => {
+  console.error(chalk.red('❌ Invalid command:'), program.args.join(' '));
+  console.log();
+  program.outputHelp();
+  process.exit(1);
+});
+
+// ------------------------------------------------------
+// Entry point
+// ------------------------------------------------------
 if (require.main === module) {
-  program.parse(process.argv);
+  if (process.argv.length <= 2) {
+    console.clear();
+    showBanner();
+    program.outputHelp();
+  } else {
+    program.parse(process.argv);
+  }
 }
+
 export default program;
