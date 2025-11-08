@@ -94,7 +94,6 @@
     ]
   },
   "dependencies": {
-    "@jridgewell/trace-mapping": "^0.3.31",
     "chalk": "^4.1.2",
     "chokidar": "^4.0.3",
     "commander": "^14.0.2",
