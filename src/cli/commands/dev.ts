@@ -7,7 +7,6 @@ import detectPort from 'detect-port';
 import prompts from 'prompts';
 import path from 'path';
 import fs from 'fs-extra';
-import { TraceMap, originalPositionFor } from '@jridgewell/trace-mapping';
 import { loadReactClientConfig } from '../../utils/loadConfig';
 import open from 'open';
 import { execSync } from 'child_process';
@@ -29,14 +28,16 @@ export default async function dev() {
   const defaultPort = userConfig.server?.port || 5173;
   const outDir = path.join(appRoot, userConfig.build?.outDir || '.react-client/dev');
 
-  const entry = path.join(appRoot, 'src', 'main.tsx');
-  const indexHtml = path.join(appRoot, 'index.html');
+  // ✅ Dynamically detect entry (main.tsx or main.jsx)
+  const possibleEntries = ['src/main.tsx', 'src/main.jsx'];
+  const entry = possibleEntries.map((p) => path.join(appRoot, p)).find((p) => fs.existsSync(p));
 
-  if (!fs.existsSync(entry)) {
-    console.error(chalk.red('❌ Entry not found: src/main.tsx'));
+  if (!entry) {
+    console.error(chalk.red('❌ No entry found: src/main.tsx or src/main.jsx'));
     process.exit(1);
   }
 
+  const indexHtml = path.join(appRoot, 'index.html');
   await fs.ensureDir(outDir);
 
   // 🧠 Detect open port
@@ -89,7 +90,7 @@ export default async function dev() {
     outdir: outDir,
     define: { 'process.env.NODE_ENV': '"development"' },
     loader: { '.ts': 'ts', '.tsx': 'tsx', '.js': 'jsx', '.jsx': 'jsx' },
-    entryNames: '[name]', // ✅ output main.js (not src/main.js)
+    entryNames: '[name]',
     assetNames: 'assets/[name]',
   });
 
@@ -123,74 +124,62 @@ export default async function dev() {
     res.end(shim + '\n' + runtime);
   });
 
-  // 2️⃣ Serve PrismJS for code highlighting (overlay)
-  app.use('/@prismjs', async (_req, res) => {
-    const prismPath = require.resolve('prismjs/prism.js');
-    const css = await fs.readFile(require.resolve('prismjs/themes/prism-tomorrow.css'), 'utf8');
-    const js = await fs.readFile(prismPath, 'utf8');
-    res.setHeader('Content-Type', 'application/javascript');
-    res.end(`
-      (function(){
-        const style = document.createElement('style');
-        style.textContent = \`${css}\`;
-        document.head.appendChild(style);
-        ${js}
-      })();
-    `);
-  });
-
-  // 3️⃣ Source map resolver (for overlay stack trace)
-  app.use('/@source-map', async (req, res) => {
-    const url = new URL(req.url ?? '', `http://localhost:${port}`);
-    const file = url.searchParams.get('file');
-    const line = Number(url.searchParams.get('line'));
-    const column = Number(url.searchParams.get('column'));
-    if (!file) {
-      res.writeHead(400);
-      res.end('Missing ?file parameter');
-      return;
-    }
-
-    const mapPath = path.join(outDir, file + '.map');
-    if (!fs.existsSync(mapPath)) {
-      res.writeHead(404);
-      res.end('Map not found');
-      return;
-    }
+  // 2️⃣ Minimal bare import resolver (/@modules/)
+  app.use('/@modules/', async (req, res, next) => {
+    const id = req.url?.replace(/^\/@modules\//, '');
+    if (!id) return next();
 
     try {
-      const mapJson = JSON.parse(await fs.readFile(mapPath, 'utf8'));
-      const traceMap = new TraceMap(mapJson);
-      const pos = originalPositionFor(traceMap, { line, column });
-      if (!pos.source) {
-        res.writeHead(404);
-        res.end('Source not found');
-        return;
-      }
+      const entry = require.resolve(id, { paths: [appRoot] });
+      const out = await esbuild.build({
+        entryPoints: [entry],
+        bundle: true,
+        write: false,
+        platform: 'browser',
+        format: 'esm',
+        target: 'es2020',
+      });
+      res.setHeader('Content-Type', 'application/javascript');
+      res.end(out.outputFiles[0].text);
+    } catch (err: unknown) {
+      console.error('Failed to resolve module', id, err);
+      res.writeHead(500);
+      res.end(`// Could not resolve module ${id}`);
+    }
+  });
 
-      const absSource = path.resolve(outDir, '../', pos.source);
-      let snippet = '';
-      if (await fs.pathExists(absSource)) {
-        const lines = (await fs.readFile(absSource, 'utf8')).split('\n');
-        const start = Math.max((pos.line || 1) - 3, 0);
-        const end = Math.min(lines.length, (pos.line || 1) + 2);
-        snippet = lines
-          .slice(start, end)
-          .map(
-            (l, i) =>
-              `<span class="line-number">${start + i + 1}</span> ${l
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')}`,
-          )
-          .join('\\n');
-      }
+  // 3️⃣ Serve /src/* files (on-the-fly transform)
+  app.use(async (req, res, next) => {
+    if (!req.url || !req.url.startsWith('/src/')) return next();
 
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ...pos, snippet }));
+    try {
+      const filePath = path.join(appRoot, decodeURIComponent(req.url.split('?')[0]));
+      if (!(await fs.pathExists(filePath))) return next();
+
+      const code = await fs.readFile(filePath, 'utf8');
+      const ext = path.extname(filePath).toLowerCase();
+
+      let loader: esbuild.Loader = 'js';
+      if (ext === '.ts') loader = 'ts';
+      else if (ext === '.tsx') loader = 'tsx';
+      else if (ext === '.jsx') loader = 'jsx';
+
+      const transformed = await esbuild.transform(code, {
+        loader,
+        sourcemap: 'inline',
+        sourcefile: req.url,
+        target: 'es2020',
+        jsxFactory: 'React.createElement',
+        jsxFragment: 'React.Fragment',
+      });
+
+      res.setHeader('Content-Type', 'application/javascript');
+      res.end(transformed.code);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error('Error serving src file:', msg);
       res.writeHead(500);
-      res.end(JSON.stringify({ error: msg }));
+      res.end(`// Error: ${msg}`);
     }
   });
 
@@ -210,7 +199,6 @@ export default async function dev() {
         `
         <script type="module">
           import "/@react-refresh";
-          import "/@prismjs";
           const ws = new WebSocket("ws://" + location.host);
           ws.onmessage = async (e) => {
             const msg = JSON.parse(e.data);
@@ -236,7 +224,6 @@ export default async function dev() {
       res.setHeader('Content-Type', 'text/html');
       res.end(html);
     } else {
-      // ✅ Serve compiled output files
       const filePath = path.join(outDir, req.url || '');
       if (await fs.pathExists(filePath)) {
         const content = await fs.readFile(filePath);
@@ -246,6 +233,7 @@ export default async function dev() {
     }
   });
 
+  // 🔁 HMR via WebSocket
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
@@ -270,9 +258,9 @@ export default async function dev() {
 
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
-    console.log(chalk.green(`\n⚡ Dev Server running at ${url}`));
-    if (port !== defaultPort)
-      console.log(chalk.yellow(`⚠️ Using alternate port (default ${defaultPort} was occupied).`));
+    console.log(chalk.cyan.bold(`\n🚀 React Client Dev Server`));
+    console.log(chalk.gray('───────────────────────────────'));
+    console.log(chalk.green(`⚡ Running at: ${url}`));
     await open(url, { newInstance: true });
   });
 
