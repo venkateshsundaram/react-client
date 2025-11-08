@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.10](https://github.com/venkateshsundaram/react-client/compare/v1.0.9...v1.0.10) (2025-11-08)
+
+
+### Bug Fixes
+
+* remove ssr support from cli ([d2e4452](https://github.com/venkateshsundaram/react-client/commit/d2e44522731a6ef3eb11e4d11668f42360494fed))
+
 ### [1.0.9](https://github.com/venkateshsundaram/react-client/compare/v1.0.8...v1.0.9) (2025-11-08)
 
 
