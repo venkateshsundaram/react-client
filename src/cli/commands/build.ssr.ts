@@ -37,8 +37,9 @@ export default async function buildSsr() {
 
     console.log(chalk.green(`✅ SSR build completed successfully!`));
     console.log(chalk.gray(`Output directory: ${outDir}`));
-  } catch (err: any) {
-    console.error(chalk.red(`❌ SSR build failed:\n${err.message}`));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('❌ SSR build failed:', msg);
     process.exit(1);
   }
 }

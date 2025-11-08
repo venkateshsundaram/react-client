@@ -13,6 +13,13 @@ import open from 'open';
 import { execSync } from 'child_process';
 import chalk from 'chalk';
 
+interface HMRMessage {
+  type: 'update' | 'error' | 'reload';
+  path?: string;
+  message?: string;
+  stack?: string;
+}
+
 export default async function dev() {
   const root = process.cwd();
 
@@ -33,7 +40,7 @@ export default async function dev() {
   await fs.ensureDir(outDir);
 
   const availablePort = await detectPort(defaultPort);
-  let port = availablePort;
+  const port = availablePort;
 
   if (availablePort !== defaultPort) {
     const res = await prompts({
@@ -61,7 +68,9 @@ export default async function dev() {
         });
         console.log(chalk.green('✅ react-refresh installed successfully.'));
         return require.resolve('react-refresh/runtime');
-      } catch (e: any) {
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(msg);
         console.error(chalk.red('❌ Failed to install react-refresh automatically.'));
         console.error('Please run: npm install react-refresh');
         process.exit(1);
@@ -157,9 +166,10 @@ export default async function dev() {
 
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ ...pos, snippet }));
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       res.writeHead(500);
-      res.end(JSON.stringify({ error: err.message }));
+      res.end(JSON.stringify({ error: msg }));
     }
   });
 
@@ -209,7 +219,7 @@ export default async function dev() {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
-  const broadcast = (data: any) => {
+  const broadcast = (data: HMRMessage) => {
     const json = JSON.stringify(data);
     wss.clients.forEach((c) => c.readyState === 1 && c.send(json));
   };
@@ -219,8 +229,12 @@ export default async function dev() {
       console.log(`🔄 Rebuilding: ${file}`);
       await ctx.rebuild();
       broadcast({ type: 'update', path: '/' + path.relative(appRoot, file).replace(/\\/g, '/') });
-    } catch (err: any) {
-      broadcast({ type: 'error', message: err.message, stack: err.stack });
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        broadcast({ type: 'error', message: err.message, stack: err.stack });
+      } else {
+        broadcast({ type: 'error', message: String(err) });
+      }
     }
   });
 

@@ -23,7 +23,7 @@ export default async function preview() {
   }
 
   const availablePort = await detectPort(defaultPort);
-  let port = availablePort;
+  const port = availablePort;
 
   if (availablePort !== defaultPort) {
     const res = await prompts({

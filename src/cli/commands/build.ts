@@ -35,8 +35,9 @@ export default async function build() {
 
     console.log(chalk.green(`✅ Build completed successfully!`));
     console.log(chalk.gray(`Output directory: ${outDir}`));
-  } catch (err: any) {
-    console.error(chalk.red(`❌ Build failed:\n${err.message}`));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('❌ Build failed:', msg);
     process.exit(1);
   }
 }

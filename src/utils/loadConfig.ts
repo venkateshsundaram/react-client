@@ -7,7 +7,7 @@ export interface ReactClientConfig {
   root?: string;
   server?: { port?: number };
   build?: { outDir?: string };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -78,8 +78,9 @@ export async function loadReactClientConfig(cwd: string): Promise<ReactClientCon
     const mod = await import(fileUrl);
     console.log(chalk.green(`🧩 Loaded config from ${path.basename(configFile)}`));
     return mod.default || mod;
-  } catch (err: any) {
-    console.error(chalk.red(`❌ Failed to load react-client.config: ${err.message}`));
-    return {};
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(chalk.red(`❌ Failed to load react-client.config: ${msg}`));
+    return {} as ReactClientConfig;
   }
 }

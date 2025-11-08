@@ -64,6 +64,7 @@
     "build:ssr": "node dist/cli/index.js build:ssr",
     "dev": "node dist/cli/index.js dev",
     "prepare": "npm run compile",
+    "precommit": "lint-staged",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
