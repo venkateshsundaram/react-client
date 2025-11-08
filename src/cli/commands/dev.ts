@@ -22,13 +22,13 @@ interface HMRMessage {
 export default async function dev() {
   const root = process.cwd();
 
-  // 🧩 Load user config
+  // 🧩 Load config
   const userConfig = await loadReactClientConfig(root);
   const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = userConfig.server?.port || 5173;
   const outDir = path.join(appRoot, userConfig.build?.outDir || '.react-client/dev');
 
-  // ✅ Dynamically detect entry (main.tsx or main.jsx)
+  // 🧠 Detect entry (main.tsx / main.jsx)
   const possibleEntries = ['src/main.tsx', 'src/main.jsx'];
   const entry = possibleEntries.map((p) => path.join(appRoot, p)).find((p) => fs.existsSync(p));
 
@@ -40,7 +40,7 @@ export default async function dev() {
   const indexHtml = path.join(appRoot, 'index.html');
   await fs.ensureDir(outDir);
 
-  // ⚙️ Detect open port
+  // 🧠 Detect available port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
 
@@ -82,25 +82,21 @@ export default async function dev() {
 
   const reactRefreshRuntime = safeResolveReactRefresh();
 
-  // 🏗️ Create esbuild context
-  const ctx = await esbuild.context({
-    entryPoints: [entry],
-    bundle: true,
-    sourcemap: true,
-    outdir: outDir,
-    define: { 'process.env.NODE_ENV': '"development"' },
-    loader: { '.ts': 'ts', '.tsx': 'tsx', '.js': 'jsx', '.jsx': 'jsx' },
-    entryNames: '[name]',
-    assetNames: 'assets/[name]',
-  });
+  // 🧠 Dependency Graph + Transform Cache
+  const deps = new Map<string, Set<string>>(); // dependency → importers
+  const transformCache = new Map<string, string>();
 
-  await ctx.watch();
+  async function resolveFile(basePath: string): Promise<string | null> {
+    if (await fs.pathExists(basePath)) return basePath;
+    const exts = ['.tsx', '.ts', '.jsx', '.js'];
+    for (const ext of exts) {
+      const candidate = basePath + ext;
+      if (await fs.pathExists(candidate)) return candidate;
+    }
+    return null;
+  }
 
-  console.log(chalk.gray('📦 Watching and building dev bundle...'));
-  console.log(chalk.gray('   Output dir:'), chalk.blue(outDir));
-  console.log(chalk.gray('   Entry file:'), chalk.yellow(entry));
-
-  // 🌐 Connect server setup
+  // 🌐 connect server
   const app = connect();
 
   // 🛡 Security headers
@@ -110,10 +106,7 @@ export default async function dev() {
     next();
   });
 
-  // 🧠 In-memory cache for /@modules
-  const moduleCache = new Map<string, string>();
-
-  // 1️⃣ Serve react-refresh runtime with safe browser shim
+  // 1️⃣ Serve react-refresh runtime with browser shim
   app.use('/@react-refresh', async (_req, res) => {
     const runtime = await fs.readFile(reactRefreshRuntime, 'utf8');
     const shim = `
@@ -126,62 +119,69 @@ export default async function dev() {
     res.end(shim + '\n' + runtime);
   });
 
-  // 2️⃣ Bare module resolver with memory cache
+  // 2️⃣ Serve bare modules dynamically (/@modules/)
   app.use('/@modules/', async (req, res, next) => {
     let id = req.url?.replace(/^\/@modules\//, '');
     if (!id) return next();
-
-    // 🧩 Normalize: remove leading slashes that may appear (e.g. "/react")
-    id = id.replace(/^\/+/, '');
-
-    if (!id) return next();
-
-    if (moduleCache.has(id)) {
-      res.setHeader('Content-Type', 'application/javascript');
-      res.end(moduleCache.get(id));
-      return;
-    }
+    id = id.replace(/^\/+/, ''); // normalize
 
     try {
-      const entryPath = require.resolve(id, { paths: [appRoot] });
+      const entry = require.resolve(id, { paths: [appRoot] });
       const out = await esbuild.build({
-        entryPoints: [entryPath],
+        entryPoints: [entry],
         bundle: true,
         write: false,
         platform: 'browser',
         format: 'esm',
         target: 'es2020',
       });
-
-      const code = out.outputFiles[0].text;
-      moduleCache.set(id, code); // ✅ cache module
       res.setHeader('Content-Type', 'application/javascript');
-      res.end(code);
+      res.end(out.outputFiles[0].text);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(chalk.red(`Failed to resolve module ${id}: ${msg}`));
+      console.error(`Failed to resolve module ${id}:`, msg);
       res.writeHead(500);
       res.end(`// Could not resolve module ${id}`);
     }
   });
 
-  // 3️⃣ Serve /src/* files — on-the-fly transform + bare import rewrite
+  // 3️⃣ Serve /src/* files — with caching, deps tracking, and HMR
   app.use(async (req, res, next) => {
     if (!req.url || !req.url.startsWith('/src/')) return next();
 
     try {
-      const filePath = path.join(appRoot, decodeURIComponent(req.url.split('?')[0]));
-      if (!(await fs.pathExists(filePath))) return next();
+      const requestPath = decodeURIComponent(req.url.split('?')[0]);
+      const filePath = path.join(appRoot, requestPath);
 
-      let code = await fs.readFile(filePath, 'utf8');
-      const ext = path.extname(filePath).toLowerCase();
+      const resolvedFile = await resolveFile(filePath);
+      if (!resolvedFile) return next();
+
+      if (transformCache.has(resolvedFile)) {
+        res.setHeader('Content-Type', 'application/javascript');
+        res.end(transformCache.get(resolvedFile)!);
+        return;
+      }
+
+      let code = await fs.readFile(resolvedFile, 'utf8');
+      const ext = path.extname(resolvedFile).toLowerCase();
 
       // 🪄 Rewrite bare imports → /@modules/
-      // 🧩 Rewrite *only bare imports* like "react", not "./" or "/" or "../"
       code = code.replace(
         /from\s+['"]((?![\.\/])[a-zA-Z0-9@/_-]+)['"]/g,
-        (_match, dep) => `from "/@modules/${dep}"`,
+        (_m, dep) => `from "/@modules/${dep}"`,
       );
+
+      // 🧩 Track dependencies (relative imports)
+      const importRegex = /from\s+['"](\.\/[^'"]+|\.{2}\/[^'"]+)['"]/g;
+      let match;
+      while ((match = importRegex.exec(code)) !== null) {
+        const rel = match[1];
+        const importer = path.relative(appRoot, resolvedFile);
+        const importedFile = path.resolve(path.dirname(resolvedFile), rel);
+        const depFile = (await resolveFile(importedFile)) ?? importedFile;
+        if (!deps.has(depFile)) deps.set(depFile, new Set());
+        deps.get(depFile)!.add(importer);
+      }
 
       let loader: esbuild.Loader = 'js';
       if (ext === '.ts') loader = 'ts';
@@ -197,6 +197,8 @@ export default async function dev() {
         jsxFragment: 'React.Fragment',
       });
 
+      transformCache.set(resolvedFile, transformed.code);
+
       res.setHeader('Content-Type', 'application/javascript');
       res.end(transformed.code);
     } catch (err: unknown) {
@@ -207,7 +209,7 @@ export default async function dev() {
     }
   });
 
-  // 4️⃣ Serve index.html with injected refresh + HMR
+  // 4️⃣ Serve index.html (inject React Refresh + HMR client + overlay)
   app.use(async (req, res, next) => {
     if (req.url === '/' || req.url === '/index.html') {
       if (!fs.existsSync(indexHtml)) {
@@ -220,6 +222,49 @@ export default async function dev() {
       html = html.replace(
         '</body>',
         `
+        <script>
+          // 🧩 Lightweight Error Overlay
+          (() => {
+            const style = document.createElement('style');
+            style.textContent = \`
+              .rc-overlay {
+                position: fixed;
+                top: 0; left: 0;
+                width: 100vw; height: 100vh;
+                background: rgba(0, 0, 0, 0.92);
+                color: #ff5555;
+                font-family: monospace;
+                padding: 2rem;
+                overflow: auto;
+                z-index: 999999;
+                white-space: pre-wrap;
+              }
+              .rc-overlay h2 {
+                color: #ff7575;
+                font-size: 1.2rem;
+                margin-bottom: 1rem;
+              }
+            \`;
+            document.head.appendChild(style);
+
+            window.showErrorOverlay = (err) => {
+              window.clearErrorOverlay?.();
+              const overlay = document.createElement('div');
+              overlay.className = 'rc-overlay';
+              overlay.innerHTML = '<h2>🚨 React Client Error</h2>' + 
+                (err.message || err.error || err) + '\\n\\n' + (err.stack || '');
+              document.body.appendChild(overlay);
+              window.__reactClientOverlay = overlay;
+            };
+
+            window.clearErrorOverlay = () => {
+              const overlay = window.__reactClientOverlay;
+              if (overlay) overlay.remove();
+              window.__reactClientOverlay = null;
+            };
+          })();
+        </script>
+
         <script type="module">
           import "/@react-refresh";
           const ws = new WebSocket("ws://" + location.host);
@@ -246,17 +291,10 @@ export default async function dev() {
 
       res.setHeader('Content-Type', 'text/html');
       res.end(html);
-    } else {
-      const filePath = path.join(outDir, req.url || '');
-      if (await fs.pathExists(filePath)) {
-        const content = await fs.readFile(filePath);
-        res.setHeader('Content-Type', 'application/javascript');
-        res.end(content);
-      } else next();
-    }
+    } else next();
   });
 
-  // 🔁 HMR WebSocket server
+  // 🔁 HMR with dependency graph
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
@@ -266,23 +304,33 @@ export default async function dev() {
   };
 
   chokidar.watch(path.join(appRoot, 'src'), { ignoreInitial: true }).on('change', async (file) => {
-    try {
-      console.log(`🔄 Rebuilding: ${file}`);
-      await ctx.rebuild();
-      broadcast({ type: 'update', path: '/' + path.relative(appRoot, file).replace(/\\/g, '/') });
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        broadcast({ type: 'error', message: err.message, stack: err.stack });
-      } else {
-        broadcast({ type: 'error', message: String(err) });
+    console.log(`🔄 File changed: ${file}`);
+
+    transformCache.delete(file);
+    broadcast({ type: 'update', path: '/' + path.relative(appRoot, file).replace(/\\/g, '/') });
+
+    // Propagate updates to dependents
+    const visited = new Set<string>();
+    const queue = [file];
+    while (queue.length > 0) {
+      const dep = queue.pop()!;
+      const importers = deps.get(dep);
+      if (!importers) continue;
+
+      for (const importer of importers) {
+        if (visited.has(importer)) continue;
+        visited.add(importer);
+        console.log(chalk.yellow(`↪️  Updating importer: ${importer}`));
+        transformCache.delete(path.join(appRoot, importer));
+        broadcast({ type: 'update', path: '/' + importer.replace(/\\/g, '/') });
+        queue.push(path.join(appRoot, importer));
       }
     }
   });
 
-  // 🟢 Start server
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
-    console.log(chalk.cyan.bold(`\n🚀 React Client Dev Server`));
+    console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
     console.log(chalk.gray('───────────────────────────────'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
     await open(url, { newInstance: true });
@@ -290,7 +338,6 @@ export default async function dev() {
 
   process.on('SIGINT', async () => {
     console.log(chalk.red('\n🛑 Shutting down...'));
-    await ctx.dispose();
     server.close();
     process.exit(0);
   });
