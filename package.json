@@ -1,7 +1,7 @@
 {
   "name": "react-client",
   "version": "1.0.9",
-  "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration. Esbuild-based, Node-native, and modular like Vite/Next.js with SSR, HMR, Tailwind, CSS Modules, and generators.",
+  "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration.",
   "license": "MIT",
   "author": "Venkatesh Sundaram",
   "repository": {
@@ -51,7 +51,6 @@
     "react-cli",
     "framework",
     "hmr",
-    "ssr",
     "esbuild",
     "tooling",
     "vite-alternative",
@@ -65,7 +64,6 @@
     "compile": "tsc -p tsconfig.build.json",
     "build": "npm run clean && npm run compile",
     "build:cli": "node dist/cli/index.js build",
-    "build:ssr": "node dist/cli/index.js build:ssr",
     "dev": "node dist/cli/index.js dev",
     "prepare": "npm run compile",
     "lint": "eslint . --ext .ts --max-warnings 0",

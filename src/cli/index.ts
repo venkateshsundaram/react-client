@@ -4,11 +4,9 @@ import path from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
 import initCmd from './commands/init';
-import generateCmd from './commands/generate';
-import { InitOptions, GenerateOptions } from './types';
+import { InitOptions } from './types';
 import devCmd from './commands/dev';
 import buildCmd from './commands/build';
-import buildSsrCmd from './commands/build.ssr';
 import previewCmd from './commands/preview';
 
 // Load package.json version dynamically
@@ -21,7 +19,7 @@ const pkg = fs.existsSync(pkgPath)
 function showBanner(cmd?: string) {
   const title = chalk.bold.cyan('⚡ React Client');
   const version = chalk.gray(`v${pkg.version}`);
-  const tagline = chalk.dim('Fast esbuild-based React CLI with HMR, SSR & Overlay');
+  const tagline = chalk.dim('Fast esbuild-based React CLI with HMR & Overlay');
   const line = chalk.gray('──────────────────────────────────────────────────────────────');
 
   console.log(`\n${title} ${version}`);
@@ -32,17 +30,11 @@ function showBanner(cmd?: string) {
     case 'init':
       console.log(chalk.cyan('📦 Initializing new React project...\n'));
       break;
-    case 'generate':
-      console.log(chalk.white('✨ Generating boilerplate files...\n'));
-      break;
     case 'dev':
       console.log(chalk.green('🚀 Starting development server...\n'));
       break;
     case 'build':
       console.log(chalk.yellow('🏗️  Building for production...\n'));
-      break;
-    case 'build:ssr':
-      console.log(chalk.magenta('🧱 Building for server-side rendering (SSR)...\n'));
       break;
     case 'preview':
       console.log(chalk.blue('🌐 Starting production preview server...\n'));
@@ -75,18 +67,6 @@ program
   });
 
 program
-  .command('generate <kind> <name>')
-  .alias('g')
-  .option('-p, --path <path>', 'output path')
-  .option('--no-ts', 'generate JS instead of TS')
-  .option('-f, --force', 'overwrite if exists')
-  .description('generate components, pages, or stores')
-  .action((kind: string, name: string, opts: GenerateOptions) => {
-    showBanner('generate');
-    generateCmd(kind, name, opts);
-  });
-
-program
   .command('dev')
   .description('start dev server (with React Fast Refresh)')
   .action(() => {
@@ -100,14 +80,6 @@ program
   .action(() => {
     showBanner('build');
     buildCmd();
-  });
-
-program
-  .command('build:ssr')
-  .description('build for server-side rendering (SSR)')
-  .action(() => {
-    showBanner('build:ssr');
-    buildSsrCmd();
   });
 
 program

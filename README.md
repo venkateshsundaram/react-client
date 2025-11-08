@@ -76,8 +76,6 @@ export default defineConfig({
 |-----------|-------------|
 | `react` | JavaScript SPA |
 | `react-ts` | TypeScript SPA |
-| `react-ssr` | JavaScript SSR |
-| `react-ssr-ts` | TypeScript SSR |
 | `react-tailwind` | JS + Tailwind |
 | `react-tailwind-ts` | TS + Tailwind |
 
@@ -94,8 +92,6 @@ Each template is pre-configured for esbuild, HMR, and fast bootstrapping.
 - 💬 **Auto Port Detection** — Prompts when default port 5173 is occupied  
 - 🧠 **Smart Config Loader** — Detects project root, compiles `.ts` configs dynamically  
 - 🎨 **PrismJS Highlighting** — For pretty overlay code frames  
-- 🧱 **SSR Runtime Support** — For server-side templates (`react-ssr*`)  
-- 🧩 **Generators** — Create components, routes, and tests instantly  
 - 🔌 **Plugin Hook System** — Extendable with `configResolved`, `transform`, `buildEnd`  
 
 ---
@@ -200,21 +196,3 @@ Found an issue or have a feature request?
 ## 🪪 License
 
 **MIT Licensed** © [Venkatesh Sundaram](https://github.com/venkateshsundaram)
-
----
-
-## 🗺️ Architecture Overview (Bonus)
-
-```text
- ┌───────────────────────────┐
- │ react-client (CLI)        │
- │  ├── esbuild (watch/bundle)
- │  ├── connect (dev server)
- │  ├── websocket (HMR)
- │  ├── prismjs overlay
- │  └── chokidar (file watch)
- └───────────────────────────┘
-             │
-             ▼
-   Browser ↔ Live HMR + Overlay
-```
