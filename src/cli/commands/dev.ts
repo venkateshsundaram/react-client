@@ -1,49 +1,39 @@
 import esbuild from 'esbuild';
 import connect from 'connect';
 import http from 'http';
-import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
 import detectPort from 'detect-port';
 import prompts from 'prompts';
 import path from 'path';
 import fs from 'fs-extra';
-import { loadReactClientConfig } from '../../utils/loadConfig';
 import open from 'open';
 import { execSync } from 'child_process';
 import chalk from 'chalk';
-
-interface HMRMessage {
-  type: 'update' | 'error' | 'reload';
-  path?: string;
-  message?: string;
-  stack?: string;
-}
+import { loadReactClientConfig } from '../../utils/loadConfig';
+import { BroadcastManager, HMRMessage } from '../../server/broadcastManager';
+import type { ReactClientPlugin } from '../../types/plugin';
 
 export default async function dev() {
   const root = process.cwd();
-
-  // 🧩 Load config
   const userConfig = await loadReactClientConfig(root);
   const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = userConfig.server?.port || 5173;
-  const outDir = path.join(appRoot, userConfig.build?.outDir || '.react-client/dev');
+  const cacheDir = path.join(appRoot, '.react-client', 'deps');
+  await fs.ensureDir(cacheDir);
 
-  // 🧠 Detect entry (main.tsx / main.jsx)
+  // Detect entry dynamically (main.tsx or main.jsx)
   const possibleEntries = ['src/main.tsx', 'src/main.jsx'];
   const entry = possibleEntries.map((p) => path.join(appRoot, p)).find((p) => fs.existsSync(p));
-
   if (!entry) {
     console.error(chalk.red('❌ No entry found: src/main.tsx or src/main.jsx'));
     process.exit(1);
   }
 
   const indexHtml = path.join(appRoot, 'index.html');
-  await fs.ensureDir(outDir);
 
-  // 🧠 Detect available port
+  // Detect open port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
-
   if (availablePort !== defaultPort) {
     const res = await prompts({
       type: 'confirm',
@@ -57,288 +47,253 @@ export default async function dev() {
     }
   }
 
-  // ⚡ Auto-install + resolve react-refresh runtime
+  // ⚡ React-refresh runtime auto install
   function safeResolveReactRefresh(): string {
     try {
       return require.resolve('react-refresh/runtime');
     } catch {
-      console.warn(chalk.yellow('⚠️ react-refresh not found — attempting to install...'));
+      console.warn(chalk.yellow('⚠️ react-refresh not found — installing...'));
+      execSync('npm install react-refresh --no-audit --no-fund --silent', {
+        cwd: root,
+        stdio: 'inherit',
+      });
+      return require.resolve('react-refresh/runtime');
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _reactRefreshRuntime = safeResolveReactRefresh();
+
+  // --- Plugins (core + user)
+  const corePlugins: ReactClientPlugin[] = [
+    {
+      name: 'css-hmr',
+      async onTransform(code: string, id: string): Promise<string> {
+        if (id.endsWith('.css')) {
+          const escaped = JSON.stringify(code);
+          return `
+          const css = ${escaped};
+          const style = document.createElement('style');
+          style.textContent = css;
+          document.head.appendChild(style);
+          import.meta.hot && import.meta.hot.accept();
+        `;
+        }
+        return code;
+      },
+    },
+  ];
+
+  const userPlugins = Array.isArray(userConfig.plugins) ? userConfig.plugins : [];
+  const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
+
+  // 🧱 Connect app
+  const app = connect();
+  const transformCache = new Map<string, string>();
+
+  // --- Prebundle persistent deps
+  async function prebundleDeps(): Promise<void> {
+    const pkgFile = path.join(appRoot, 'package.json');
+    if (!fs.existsSync(pkgFile)) return;
+
+    const pkg = JSON.parse(await fs.readFile(pkgFile, 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+
+    const deps = Object.keys(pkg.dependencies || {});
+    if (!deps.length) return;
+
+    const cached = await fs.readdir(cacheDir);
+    const missing = deps.filter((d) => !cached.includes(d + '.js'));
+    if (!missing.length) return;
+
+    console.log(chalk.cyan('📦 Prebundling:'), missing.join(', '));
+    for (const dep of missing) {
       try {
-        execSync('npm install react-refresh --no-audit --no-fund --silent', {
-          cwd: root,
-          stdio: 'inherit',
+        const entryPath = require.resolve(dep, { paths: [appRoot] });
+        const outFile = path.join(cacheDir, dep + '.js');
+        await esbuild.build({
+          entryPoints: [entryPath],
+          bundle: true,
+          platform: 'browser',
+          format: 'esm',
+          outfile: outFile,
+          write: true,
+          target: 'es2020',
         });
-        console.log(chalk.green('✅ react-refresh installed successfully.'));
-        return require.resolve('react-refresh/runtime');
+        console.log(chalk.green(`✅ Cached ${dep}`));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(msg);
-        console.error(chalk.red('❌ Failed to install react-refresh automatically.'));
-        console.error('Please run: npm install react-refresh');
-        process.exit(1);
+        console.warn(chalk.yellow(`⚠️ Skipped ${dep}: ${msg}`));
       }
     }
   }
+  await prebundleDeps();
 
-  const reactRefreshRuntime = safeResolveReactRefresh();
-
-  // 🧠 Dependency Graph + Transform Cache
-  const deps = new Map<string, Set<string>>(); // dependency → importers
-  const transformCache = new Map<string, string>();
-
-  async function resolveFile(basePath: string): Promise<string | null> {
-    if (await fs.pathExists(basePath)) return basePath;
-    const exts = ['.tsx', '.ts', '.jsx', '.js'];
-    for (const ext of exts) {
-      const candidate = basePath + ext;
-      if (await fs.pathExists(candidate)) return candidate;
-    }
-    return null;
-  }
-
-  // 🌐 connect server
-  const app = connect();
-
-  // 🛡 Security headers
-  app.use((_req, res, next) => {
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-    next();
-  });
-
-  // 1️⃣ Serve react-refresh runtime with browser shim
-  app.use('/@react-refresh', async (_req, res) => {
-    const runtime = await fs.readFile(reactRefreshRuntime, 'utf8');
-    const shim = `
-      window.process = window.process || { env: { NODE_ENV: 'development' } };
-      window.module = { exports: {} };
-      window.global = window;
-      window.require = () => window.module.exports;
-    `;
-    res.setHeader('Content-Type', 'application/javascript');
-    res.end(shim + '\n' + runtime);
-  });
-
-  // 2️⃣ Serve bare modules dynamically (/@modules/)
+  // --- Serve prebundled modules
   app.use('/@modules/', async (req, res, next) => {
-    let id = req.url?.replace(/^\/@modules\//, '');
+    const id = req.url?.replace(/^\/@modules\//, '');
     if (!id) return next();
-    id = id.replace(/^\/+/, ''); // normalize
 
     try {
-      const entry = require.resolve(id, { paths: [appRoot] });
-      const out = await esbuild.build({
-        entryPoints: [entry],
+      const cacheFile = path.join(cacheDir, id.replace(/\//g, '_') + '.js');
+      if (await fs.pathExists(cacheFile)) {
+        res.setHeader('Content-Type', 'application/javascript');
+        return res.end(await fs.readFile(cacheFile));
+      }
+
+      const entryPath = require.resolve(id, { paths: [appRoot] });
+      const result = await esbuild.build({
+        entryPoints: [entryPath],
         bundle: true,
-        write: false,
         platform: 'browser',
         format: 'esm',
         target: 'es2020',
+        write: false,
       });
+
+      let code = result.outputFiles[0].text;
+      if (id === 'react-dom/client') {
+        code += `
+          import * as ReactDOMClient from '/@modules/react-dom';
+          export const createRoot = ReactDOMClient.createRoot || ReactDOMClient.default?.createRoot;
+          export default ReactDOMClient.default || ReactDOMClient;
+        `;
+      }
+
+      await fs.writeFile(cacheFile, code, 'utf8');
       res.setHeader('Content-Type', 'application/javascript');
-      res.end(out.outputFiles[0].text);
+      res.end(code);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Failed to resolve module ${id}:`, msg);
       res.writeHead(500);
-      res.end(`// Could not resolve module ${id}`);
+      res.end(`// Failed to resolve module ${id}: ${msg}`);
     }
   });
 
-  // 3️⃣ Serve /src/* files — with caching, deps tracking, and HMR
+  // --- Serve /src files dynamically
   app.use(async (req, res, next) => {
-    if (!req.url || !req.url.startsWith('/src/')) return next();
+    if (!req.url || (!req.url.startsWith('/src/') && !req.url.endsWith('.css'))) return next();
+    const filePath = path.join(appRoot, decodeURIComponent(req.url.split('?')[0]));
+    if (!(await fs.pathExists(filePath))) return next();
 
     try {
-      const requestPath = decodeURIComponent(req.url.split('?')[0]);
-      const filePath = path.join(appRoot, requestPath);
-
-      const resolvedFile = await resolveFile(filePath);
-      if (!resolvedFile) return next();
-
-      if (transformCache.has(resolvedFile)) {
+      if (transformCache.has(filePath)) {
         res.setHeader('Content-Type', 'application/javascript');
-        res.end(transformCache.get(resolvedFile)!);
-        return;
+        return res.end(transformCache.get(filePath)!);
       }
 
-      let code = await fs.readFile(resolvedFile, 'utf8');
-      const ext = path.extname(resolvedFile).toLowerCase();
-
-      // 🪄 Rewrite bare imports → /@modules/
-      code = code.replace(
-        /from\s+['"]((?![\.\/])[a-zA-Z0-9@/_-]+)['"]/g,
-        (_m, dep) => `from "/@modules/${dep}"`,
-      );
-
-      // 🧩 Track dependencies (relative imports)
-      const importRegex = /from\s+['"](\.\/[^'"]+|\.{2}\/[^'"]+)['"]/g;
-      let match;
-      while ((match = importRegex.exec(code)) !== null) {
-        const rel = match[1];
-        const importer = path.relative(appRoot, resolvedFile);
-        const importedFile = path.resolve(path.dirname(resolvedFile), rel);
-        const depFile = (await resolveFile(importedFile)) ?? importedFile;
-        if (!deps.has(depFile)) deps.set(depFile, new Set());
-        deps.get(depFile)!.add(importer);
+      let code = await fs.readFile(filePath, 'utf8');
+      for (const p of plugins) {
+        if (p.onTransform) code = await p.onTransform(code, filePath);
       }
 
+      const ext = path.extname(filePath);
       let loader: esbuild.Loader = 'js';
       if (ext === '.ts') loader = 'ts';
       else if (ext === '.tsx') loader = 'tsx';
       else if (ext === '.jsx') loader = 'jsx';
 
-      const transformed = await esbuild.transform(code, {
+      const result = await esbuild.transform(code, {
         loader,
         sourcemap: 'inline',
-        sourcefile: req.url,
         target: 'es2020',
-        jsxFactory: 'React.createElement',
-        jsxFragment: 'React.Fragment',
       });
-
-      transformCache.set(resolvedFile, transformed.code);
-
+      transformCache.set(filePath, result.code);
       res.setHeader('Content-Type', 'application/javascript');
-      res.end(transformed.code);
+      res.end(result.code);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error('Error serving /src file:', msg);
       res.writeHead(500);
       res.end(`// Error: ${msg}`);
     }
   });
 
-  // 4️⃣ Serve index.html (inject React Refresh + HMR client + overlay)
+  // --- Serve index.html with overlay + HMR client
   app.use(async (req, res, next) => {
-    if (req.url === '/' || req.url === '/index.html') {
-      if (!fs.existsSync(indexHtml)) {
-        res.writeHead(404);
-        res.end('index.html not found');
-        return;
-      }
+    if (req.url !== '/' && req.url !== '/index.html') return next();
+    if (!fs.existsSync(indexHtml)) {
+      res.writeHead(404);
+      return res.end('index.html not found');
+    }
 
-      let html = await fs.readFile(indexHtml, 'utf8');
-      html = html.replace(
-        '</body>',
-        `
-        <script>
-          // 🧩 Lightweight Error Overlay
-          (() => {
-            const style = document.createElement('style');
-            style.textContent = \`
-              .rc-overlay {
-                position: fixed;
-                top: 0; left: 0;
-                width: 100vw; height: 100vh;
-                background: rgba(0, 0, 0, 0.92);
-                color: #ff5555;
-                font-family: monospace;
-                padding: 2rem;
-                overflow: auto;
-                z-index: 999999;
-                white-space: pre-wrap;
-              }
-              .rc-overlay h2 {
-                color: #ff7575;
-                font-size: 1.2rem;
-                margin-bottom: 1rem;
-              }
-            \`;
-            document.head.appendChild(style);
-
-            window.showErrorOverlay = (err) => {
-              window.clearErrorOverlay?.();
-              const overlay = document.createElement('div');
-              overlay.className = 'rc-overlay';
-              overlay.innerHTML = '<h2>🚨 React Client Error</h2>' + 
-                (err.message || err.error || err) + '\\n\\n' + (err.stack || '');
-              document.body.appendChild(overlay);
-              window.__reactClientOverlay = overlay;
-            };
-
-            window.clearErrorOverlay = () => {
-              const overlay = window.__reactClientOverlay;
-              if (overlay) overlay.remove();
-              window.__reactClientOverlay = null;
-            };
-          })();
-        </script>
-
-        <script type="module">
-          import "/@react-refresh";
-          const ws = new WebSocket("ws://" + location.host);
-          ws.onmessage = async (e) => {
-            const msg = JSON.parse(e.data);
-            if (msg.type === "error") {
-              console.error(msg);
-              return window.showErrorOverlay?.(msg);
+    let html = await fs.readFile(indexHtml, 'utf8');
+    html = html.replace(
+      '</body>',
+      `
+      <script>
+        (() => {
+          const style = document.createElement('style');
+          style.textContent = \`
+            .rc-overlay {
+              position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+              background: rgba(0,0,0,0.9); color: #ff5555;
+              font-family: monospace; padding: 2rem; overflow:auto; z-index: 999999;
             }
-            if (msg.type === "update") {
-              try {
-                await import(msg.path + "?t=" + Date.now());
-                window.clearErrorOverlay?.();
-                window.$RefreshRuntime?.performReactRefresh?.();
-              } catch (err) {
-                window.showErrorOverlay?.(err);
-              }
-            }
-            if (msg.type === "reload") location.reload();
+          \`;
+          document.head.appendChild(style);
+          window.showErrorOverlay = (err) => {
+            window.clearErrorOverlay?.();
+            const el = document.createElement('div');
+            el.className = 'rc-overlay';
+            el.innerHTML = '<h2>🚨 Error</h2><pre>' + (err.message || err) + '</pre>';
+            document.body.appendChild(el);
+            window.__overlay = el;
           };
-        </script>
-        </body>`,
-      );
+          window.clearErrorOverlay = () => window.__overlay?.remove();
+        })();
+      </script>
+      <script type="module">
+        const ws = new WebSocket("ws://" + location.host);
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "reload") location.reload();
+          if (msg.type === "error") return window.showErrorOverlay?.(msg);
+          if (msg.type === "update") {
+            window.clearErrorOverlay?.();
+            import(msg.path + "?t=" + Date.now());
+          }
+        };
+      </script>
+      </body>`,
+    );
 
-      res.setHeader('Content-Type', 'text/html');
-      res.end(html);
-    } else next();
+    res.setHeader('Content-Type', 'text/html');
+    res.end(html);
   });
 
-  // 🔁 HMR with dependency graph
+  // --- WebSocket + HMR via BroadcastManager
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server });
-
-  const broadcast = (data: HMRMessage) => {
-    const json = JSON.stringify(data);
-    wss.clients.forEach((c) => c.readyState === 1 && c.send(json));
-  };
+  const broadcaster = new BroadcastManager(server);
 
   chokidar.watch(path.join(appRoot, 'src'), { ignoreInitial: true }).on('change', async (file) => {
-    console.log(`🔄 File changed: ${file}`);
-
+    console.log(chalk.yellow(`🔄 Changed: ${file}`));
     transformCache.delete(file);
-    broadcast({ type: 'update', path: '/' + path.relative(appRoot, file).replace(/\\/g, '/') });
 
-    // Propagate updates to dependents
-    const visited = new Set<string>();
-    const queue = [file];
-    while (queue.length > 0) {
-      const dep = queue.pop()!;
-      const importers = deps.get(dep);
-      if (!importers) continue;
-
-      for (const importer of importers) {
-        if (visited.has(importer)) continue;
-        visited.add(importer);
-        console.log(chalk.yellow(`↪️  Updating importer: ${importer}`));
-        transformCache.delete(path.join(appRoot, importer));
-        broadcast({ type: 'update', path: '/' + importer.replace(/\\/g, '/') });
-        queue.push(path.join(appRoot, importer));
-      }
+    for (const p of plugins) {
+      p.onHotUpdate?.(file, {
+        broadcast: (msg: HMRMessage) => broadcaster.broadcast(msg),
+      });
     }
+
+    broadcaster.broadcast({
+      type: 'update',
+      path: '/' + path.relative(appRoot, file).replace(/\\/g, '/'),
+    });
   });
 
+  // 🚀 Launch
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
     console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
-    console.log(chalk.gray('───────────────────────────────'));
+    console.log(chalk.gray('──────────────────────────────'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
     await open(url, { newInstance: true });
   });
 
-  process.on('SIGINT', async () => {
+  process.on('SIGINT', () => {
     console.log(chalk.red('\n🛑 Shutting down...'));
-    server.close();
+    broadcaster.close();
     process.exit(0);
   });
 }
