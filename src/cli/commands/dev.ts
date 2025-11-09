@@ -4,7 +4,6 @@
  * - prebundles deps into .react-client/deps
  * - serves /@modules/<dep>
  * - serves /src/* with esbuild transform & inline sourcemap
- * - serves /@runtime/overlay -> src/runtime/overlay-runtime.js
  * - /@source-map returns a snippet for overlay mapping
  * - HMR broadcast via BroadcastManager (ws)
  *
@@ -195,33 +194,39 @@ export default async function dev(): Promise<void> {
         return res.end(await fs.readFile(cacheFile, 'utf8'));
       }
 
-      // 🧠 Handle subpaths correctly: react-dom/client, react/jsx-runtime, etc.
-      let entryPath: string | null = null;
+      // 🧠 Smart module resolver: handles subpaths like react-dom/client, react/jsx-runtime, etc.
+      let entryFile: string | null = null;
 
       try {
-        entryPath = require.resolve(id, { paths: [appRoot] });
+        // Try direct require.resolve first (works for most)
+        entryFile = require.resolve(id, { paths: [appRoot] });
       } catch {
-        // Fallback: handle packages with subpaths dynamically
+        // Handle subpath imports
         const parts = id.split('/');
-        if (parts.length > 1) {
-          const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-          const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
-          const pkgDir = path.dirname(
-            require.resolve(`${pkgRoot}/package.json`, { paths: [appRoot] }),
-          );
+        const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+        const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
+        const pkgJson = require.resolve(`${pkgRoot}/package.json`, { paths: [appRoot] });
+        const pkgDir = path.dirname(pkgJson);
 
-          // resolve full subpath from package root
-          const tryPath = path.join(pkgDir, subPath);
-          if (await fs.pathExists(tryPath + '.js')) entryPath = tryPath + '.js';
-          else if (await fs.pathExists(tryPath + '.mjs')) entryPath = tryPath + '.mjs';
-          else if (await fs.pathExists(tryPath + '/index.js')) entryPath = tryPath + '/index.js';
+        const tryFiles = [
+          path.join(pkgDir, subPath),
+          path.join(pkgDir, subPath, 'index.js'),
+          path.join(pkgDir, subPath + '.js'),
+          path.join(pkgDir, subPath + '.mjs'),
+        ];
+
+        for (const f of tryFiles) {
+          if (await fs.pathExists(f)) {
+            entryFile = f;
+            break;
+          }
         }
       }
 
-      if (!entryPath) throw new Error(`Could not resolve ${id}`);
+      if (!entryFile) throw new Error(`Cannot resolve module: ${id}`);
 
       const result = await esbuild.build({
-        entryPoints: [entryPath],
+        entryPoints: [entryFile],
         bundle: true,
         platform: 'browser',
         format: 'esm',
@@ -241,15 +246,96 @@ export default async function dev(): Promise<void> {
   });
 
   // --- Serve runtime overlay (local file) so overlay-runtime.js is loaded automatically
+  // --- Serve runtime overlay (inline in dev server)
+  const OVERLAY_RUNTIME = `
+import "/@prismjs";
+
+const overlayId = "__rc_error_overlay__";
+
+const style = document.createElement("style");
+style.textContent = \`
+  #\${overlayId} {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    font-family: Menlo, Consolas, monospace;
+    font-size: 14px;
+    z-index: 999999;
+    overflow: auto;
+    padding: 24px;
+    animation: fadeIn 0.2s ease-out;
+  }
+  @keyframes fadeIn { from {opacity: 0;} to {opacity: 1;} }
+  #\${overlayId} h2 { color: #ff6b6b; margin-bottom: 16px; }
+  #\${overlayId} pre { background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px; }
+  #\${overlayId} a { color: #9cf; text-decoration: underline; }
+  #\${overlayId} .frame { margin: 12px 0; }
+  #\${overlayId} .frame-file { color: #ffa500; cursor: pointer; font-weight: bold; margin-bottom: 4px; }
+  .line-number { opacity: 0.5; margin-right: 10px; }
+\`;
+document.head.appendChild(style);
+
+async function mapStackFrame(frame) {
+  const m = frame.match(/(\\/src\\/[^\s:]+):(\\d+):(\\d+)/);
+  if (!m) return frame;
+  const [, file, line, col] = m;
+  const resp = await fetch(\`/@source-map?file=\${file}&line=\${line}&column=\${col}\`);
+  if (!resp.ok) return frame;
+  const pos = await resp.json();
+  if (pos.source) {
+    return {
+      file: pos.source,
+      line: pos.line,
+      column: pos.column,
+      snippet: pos.snippet || ""
+    };
+  }
+  return frame;
+}
+
+async function renderOverlay(err) {
+  const overlay =
+    document.getElementById(overlayId) ||
+    document.body.appendChild(Object.assign(document.createElement("div"), { id: overlayId }));
+  overlay.innerHTML = "";
+  const title = document.createElement("h2");
+  title.textContent = "🔥 " + (err.message || "Error");
+  overlay.appendChild(title);
+
+  const frames = (err.stack || "").split("\\n").filter(l => /src\\//.test(l));
+  for (const frame of frames) {
+    const mapped = await mapStackFrame(frame);
+    if (typeof mapped === "string") continue;
+    const frameEl = document.createElement("div");
+    frameEl.className = "frame";
+
+    const link = document.createElement("div");
+    link.className = "frame-file";
+    link.textContent = \`\${mapped.file}:\${mapped.line}:\${mapped.column}\`;
+    link.onclick = () =>
+      window.open("vscode://file/" + location.origin.replace("http://", "") + mapped.file + ":" + mapped.line);
+    frameEl.appendChild(link);
+
+    if (mapped.snippet) {
+      const pre = document.createElement("pre");
+      pre.classList.add("language-jsx");
+      pre.innerHTML = Prism.highlight(mapped.snippet, Prism.languages.jsx, "jsx");
+      frameEl.appendChild(pre);
+    }
+
+    overlay.appendChild(frameEl);
+  }
+}
+
+window.showErrorOverlay = (err) => renderOverlay(err);
+window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
+`;
+
   app.use(async (req, res, next) => {
     if (req.url === '/@runtime/overlay') {
-      const overlayPath = path.join(appRoot, 'src/runtime/overlay-runtime.js');
-      if (!(await fs.pathExists(overlayPath))) {
-        res.writeHead(404);
-        return res.end('// overlay-runtime.js not found');
-      }
       res.setHeader('Content-Type', 'application/javascript');
-      return res.end(await fs.readFile(overlayPath, 'utf8'));
+      return res.end(OVERLAY_RUNTIME);
     }
     next();
   });
