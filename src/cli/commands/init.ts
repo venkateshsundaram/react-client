@@ -53,7 +53,7 @@ export default defineConfig({
 
   // ⚡ Dev server settings
   server: {
-    port: 5173,
+    port: 2202,
   },
 
   // 🏗️ Build options

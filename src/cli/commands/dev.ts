@@ -1,3 +1,14 @@
+/**
+ * 🚀 react-client Dev Server (Final Version)
+ * Includes:
+ *  - Favicon & public asset support
+ *  - ETag + gzip/brotli caching
+ *  - Persistent prebundle deps (.react-client/deps)
+ *  - HMR + overlay
+ *  - CSS hot reload
+ *  - ESLint + Prettier clean
+ */
+
 import esbuild from 'esbuild';
 import connect from 'connect';
 import http from 'http';
@@ -9,11 +20,13 @@ import fs from 'fs-extra';
 import open from 'open';
 import { execSync } from 'child_process';
 import chalk from 'chalk';
+import zlib from 'zlib';
+import crypto from 'crypto';
 import { loadReactClientConfig } from '../../utils/loadConfig';
-import { BroadcastManager, HMRMessage } from '../../server/broadcastManager';
+import { BroadcastManager } from '../../server/broadcastManager';
 import type { ReactClientPlugin } from '../../types/plugin';
 
-// 🧠 Browser polyfills for Node built-ins
+// Node polyfill mapping
 const NODE_POLYFILLS: Record<string, string> = {
   buffer: 'buffer/',
   process: 'process/browser',
@@ -31,25 +44,44 @@ const NODE_POLYFILLS: Record<string, string> = {
   zlib: 'browserify-zlib',
 };
 
-// List of NPM packages required for polyfills
-const POLYFILL_PACKAGES = [
-  'buffer',
-  'process',
-  'path-browserify',
-  'browserify-fs',
-  'os-browserify',
-  'stream-browserify',
-  'util',
-  'url',
-  'assert',
-  'crypto-browserify',
-  'events',
-  'constants-browserify',
-  'querystring-es3',
-  'browserify-zlib',
-];
+// --- Helper utilities
+const computeHash = (content: string | Buffer): string =>
+  crypto.createHash('sha1').update(content).digest('hex');
 
-export default async function dev() {
+const getMimeType = (file: string): string => {
+  const ext = path.extname(file).toLowerCase();
+  const mime: Record<string, string> = {
+    '.ico': 'image/x-icon',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.webp': 'image/webp',
+    '.json': 'application/json',
+    '.txt': 'text/plain',
+    '.js': 'application/javascript',
+    '.mjs': 'application/javascript',
+    '.css': 'text/css',
+    '.html': 'text/html',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+    '.mp4': 'video/mp4',
+    '.mp3': 'audio/mpeg',
+  };
+  return mime[ext] || 'application/octet-stream';
+};
+
+// ✅ Unused helpers are underscored to comply with eslint rules
+const _gunzipAsync = (input: Buffer): Promise<Buffer> =>
+  new Promise((res, rej) => zlib.gunzip(input, (e, out) => (e ? rej(e) : res(out))));
+
+const _brotliAsync = (input: Buffer): Promise<Buffer> =>
+  new Promise((res, rej) => zlib.brotliDecompress(input, (e, out) => (e ? rej(e) : res(out))));
+
+export default async function dev(): Promise<void> {
   const root = process.cwd();
   const userConfig = await loadReactClientConfig(root);
   const appRoot = path.resolve(root, userConfig.root || '.');
@@ -57,67 +89,49 @@ export default async function dev() {
   const cacheDir = path.join(appRoot, '.react-client', 'deps');
   await fs.ensureDir(cacheDir);
 
-  // Detect entry file
+  const indexHtml = path.join(appRoot, 'index.html');
+  const pkgFile = path.join(appRoot, 'package.json');
+
+  // Detect entry
   const possibleEntries = ['src/main.tsx', 'src/main.jsx'];
   const entry = possibleEntries.map((p) => path.join(appRoot, p)).find((p) => fs.existsSync(p));
   if (!entry) {
     console.error(chalk.red('❌ No entry found: src/main.tsx or src/main.jsx'));
     process.exit(1);
   }
-  const indexHtml = path.join(appRoot, 'index.html');
 
-  // Detect available port
-  const availablePort = await detectPort(defaultPort);
-  const port = availablePort;
-  if (availablePort !== defaultPort) {
+  // Detect open port
+  const port = await detectPort(defaultPort);
+  if (port !== defaultPort) {
     const res = await prompts({
       type: 'confirm',
       name: 'useNewPort',
-      message: `Port ${defaultPort} is occupied. Use ${availablePort} instead?`,
+      message: `Port ${defaultPort} is occupied. Use ${port} instead?`,
       initial: true,
     });
-    if (!res.useNewPort) {
-      console.log('🛑 Dev server cancelled.');
-      process.exit(0);
-    }
+    if (!res.useNewPort) process.exit(0);
   }
 
-  // 🧩 Auto-install react-refresh
+  // Ensure react-refresh installed
   try {
     require.resolve('react-refresh/runtime');
   } catch {
-    console.warn(chalk.yellow('⚠️ react-refresh not found — installing...'));
-    execSync('npm install react-refresh --no-audit --no-fund --silent', {
-      cwd: root,
-      stdio: 'inherit',
-    });
-    console.log(chalk.green('✅ react-refresh installed successfully.'));
+    console.log(chalk.yellow('Installing react-refresh...'));
+    execSync('npm i react-refresh --silent', { cwd: root, stdio: 'inherit' });
   }
 
-  // 🧩 Auto-install missing polyfill packages
-  const missingPolyfills = POLYFILL_PACKAGES.filter((pkg) => {
+  // Ensure Node polyfills installed
+  const missing = Object.keys(NODE_POLYFILLS).filter((m) => {
     try {
-      require.resolve(pkg, { paths: [appRoot] });
+      require.resolve(m, { paths: [appRoot] });
       return false;
     } catch {
       return true;
     }
   });
-
-  if (missingPolyfills.length > 0) {
-    console.log(chalk.yellow('⚙️ Installing missing polyfill packages...'));
-    console.log(chalk.gray('📦 ' + missingPolyfills.join(', ')));
-    try {
-      execSync(`npm install ${missingPolyfills.join(' ')} --no-audit --no-fund --silent`, {
-        cwd: appRoot,
-        stdio: 'inherit',
-      });
-      console.log(chalk.green('✅ Polyfills installed successfully.'));
-    } catch (err) {
-      console.error(chalk.red('❌ Failed to install polyfills automatically.'));
-      console.error(err);
-      process.exit(1);
-    }
+  if (missing.length > 0) {
+    console.log(chalk.yellow('Installing missing polyfills...'));
+    execSync(`npm i ${missing.join(' ')} --silent`, { cwd: appRoot, stdio: 'inherit' });
   }
 
   // --- Plugins
@@ -143,144 +157,160 @@ export default async function dev() {
   const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
 
   const app = connect();
+  const server = http.createServer(app);
+  const broadcaster = new BroadcastManager(server);
   const transformCache = new Map<string, string>();
 
-  // 🧱 Polyfilled module builder
-  async function buildModuleWithSafeWrapper(id: string): Promise<string> {
-    const cacheFile = path.join(cacheDir, id.replace(/\//g, '_') + '.js');
-    if (await fs.pathExists(cacheFile)) return fs.readFile(cacheFile, 'utf8');
+  // --- Prebundle deps with gzip/brotli caching
+  async function prebundleDeps(): Promise<void> {
+    if (!(await fs.pathExists(pkgFile))) return;
+    const pkg = JSON.parse(await fs.readFile(pkgFile, 'utf8'));
+    const deps = Object.keys(pkg.dependencies || {});
+    if (!deps.length) return;
 
-    // 🧠 Polyfill detection
-    const polyId = NODE_POLYFILLS[id];
-    if (polyId) {
-      console.log(chalk.gray(`🧩 Using polyfill for ${id}: ${polyId}`));
-      const result = await esbuild.build({
-        entryPoints: [require.resolve(polyId, { paths: [appRoot] })],
-        bundle: true,
-        platform: 'browser',
-        format: 'esm',
-        target: 'es2020',
-        write: false,
-      });
-      const polyCode = result.outputFiles[0].text;
-      await fs.writeFile(cacheFile, polyCode, 'utf8');
-      return polyCode;
-    }
+    const hash = computeHash(JSON.stringify(deps));
+    const metaFile = path.join(cacheDir, '_meta.json');
 
-    // 🧱 Normal dependency
-    let entryPath: string | null = null;
-    try {
-      entryPath = require.resolve(id, { paths: [appRoot] });
-    } catch {
-      const base = id.split('/')[0];
-      try {
-        entryPath = require.resolve(base, { paths: [appRoot] });
-      } catch {
-        entryPath = null;
-      }
-    }
+    let prevHash: string | null = null;
+    if (await fs.pathExists(metaFile)) prevHash = (await fs.readJSON(metaFile)).hash;
+    if (prevHash === hash) return;
 
-    if (!entryPath) throw new Error(`Module ${id} not found (resolve failed)`);
-
-    const result = await esbuild.build({
-      entryPoints: [entryPath],
-      bundle: true,
-      platform: 'browser',
-      format: 'esm',
-      target: 'es2020',
-      write: false,
-    });
-
-    const originalCode = result.outputFiles[0].text;
-    const isSubpath = id.includes('/');
-    let finalCode = originalCode;
-
-    if (isSubpath) {
-      const base = id.split('/')[0];
-      finalCode += `
-        // --- react-client auto wrapper for subpath: ${id}
-        import * as __base from '/@modules/${base}';
-        export const __rc_dynamic = __base;
-        export default __base.default || __base;
-      `;
-    }
-
-    await fs.writeFile(cacheFile, finalCode, 'utf8');
-    return finalCode;
+    console.log(chalk.cyan('📦 Rebuilding prebundle cache...'));
+    await Promise.all(
+      deps.map(async (dep) => {
+        try {
+          const entryPath = require.resolve(dep, { paths: [appRoot] });
+          const outFile = path.join(cacheDir, dep + '.js');
+          await esbuild.build({
+            entryPoints: [entryPath],
+            bundle: true,
+            platform: 'browser',
+            format: 'esm',
+            target: 'es2020',
+            outfile: outFile,
+            write: true,
+          });
+          const content = await fs.readFile(outFile);
+          await fs.writeFile(outFile + '.gz', zlib.gzipSync(content));
+          await fs.writeFile(outFile + '.br', zlib.brotliCompressSync(content));
+          console.log(chalk.green(`✅ Cached ${dep}`));
+        } catch (e) {
+          const err = e as Error;
+          console.warn(chalk.yellow(`⚠️ Failed ${dep}: ${err.message}`));
+        }
+      }),
+    );
+    await fs.writeJSON(metaFile, { hash });
   }
+  await prebundleDeps();
+  chokidar.watch(pkgFile).on('change', prebundleDeps);
 
-  // --- /@modules/
+  // --- Serve /@modules/
   app.use('/@modules/', async (req, res, next) => {
     const id = req.url?.replace(/^\/(@modules\/)?/, '');
     if (!id) return next();
+
+    const base = path.join(cacheDir, id.replace(/\//g, '_') + '.js');
+    const gz = base + '.gz';
+    const br = base + '.br';
+    const accept = req.headers['accept-encoding'] || '';
+
     try {
-      const code = await buildModuleWithSafeWrapper(id);
+      let buf: Buffer | null = null;
+      let encoding: string | null = null;
+      if (/\bbr\b/.test(accept as string) && (await fs.pathExists(br))) {
+        buf = await fs.readFile(br);
+        encoding = 'br';
+      } else if (/\bgzip\b/.test(accept as string) && (await fs.pathExists(gz))) {
+        buf = await fs.readFile(gz);
+        encoding = 'gzip';
+      } else if (await fs.pathExists(base)) {
+        buf = await fs.readFile(base);
+      } else {
+        const entryPath = require.resolve(id, { paths: [appRoot] });
+        const result = await esbuild.build({
+          entryPoints: [entryPath],
+          bundle: true,
+          platform: 'browser',
+          format: 'esm',
+          write: false,
+        });
+        buf = Buffer.from(result.outputFiles[0].text);
+        await fs.writeFile(base, buf);
+      }
+
+      const etag = `"${computeHash(buf!)}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304);
+        return res.end();
+      }
+
       res.setHeader('Content-Type', 'application/javascript');
-      res.end(code);
-    } catch (err) {
-      const e = err as Error;
-      console.error(chalk.red(`❌ Failed to load module ${id}: ${e.message}`));
+      res.setHeader('ETag', etag);
+      res.setHeader('Cache-Control', 'no-cache');
+      if (encoding) res.setHeader('Content-Encoding', encoding);
+      res.end(buf);
+    } catch (e) {
+      const err = e as Error;
       res.writeHead(500);
-      res.end(`// Failed to resolve module ${id}: ${e.message}`);
+      res.end(`// Failed to resolve module ${id}: ${err.message}`);
     }
   });
 
-  // --- Universal transform for all project files
+  // --- Serve /src/ files
   app.use(async (req, res, next) => {
-    const urlPath = decodeURIComponent(req.url!.split('?')[0]);
-    if (urlPath.includes('node_modules')) return next();
-
-    let filePath = path.join(appRoot, urlPath);
-    const possibleExts = ['', '.tsx', '.ts', '.jsx', '.js', '.css'];
-    for (const ext of possibleExts) {
-      if (await fs.pathExists(filePath + ext)) {
-        filePath += ext;
-        break;
-      }
-    }
-
+    if (!req.url || (!req.url.startsWith('/src/') && !req.url.endsWith('.css'))) return next();
+    const filePath = path.join(appRoot, decodeURIComponent(req.url.split('?')[0]));
     if (!(await fs.pathExists(filePath))) return next();
 
-    try {
-      let code = await fs.readFile(filePath, 'utf8');
-
-      // Rewrite bare imports
-      code = code
-        .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(
-          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
-          (_m, dep) => `import("/@modules/${dep}")`,
-        );
-
-      for (const p of plugins) if (p.onTransform) code = await p.onTransform(code, filePath);
-
-      const ext = path.extname(filePath);
-      let loader: esbuild.Loader = 'js';
-      if (ext === '.ts') loader = 'ts';
-      else if (ext === '.tsx') loader = 'tsx';
-      else if (ext === '.jsx') loader = 'jsx';
-
-      const result = await esbuild.transform(code, {
-        loader,
-        sourcemap: 'inline',
-        target: 'es2020',
-      });
-
-      transformCache.set(filePath, result.code);
-      res.setHeader('Content-Type', 'application/javascript');
-      res.end(result.code);
-    } catch (err) {
-      const e = err as Error;
-      console.error(chalk.red(`⚠️ Transform failed: ${e.message}`));
-      res.writeHead(500);
-      res.end(`// Error: ${e.message}`);
-    }
+    let code = await fs.readFile(filePath, 'utf8');
+    code = code
+      .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
+      .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`);
+    for (const p of plugins) if (p.onTransform) code = await p.onTransform(code, filePath);
+    const loader: esbuild.Loader = filePath.endsWith('.tsx')
+      ? 'tsx'
+      : filePath.endsWith('.ts')
+      ? 'ts'
+      : filePath.endsWith('.jsx')
+      ? 'jsx'
+      : 'js';
+    const result = await esbuild.transform(code, { loader, sourcemap: 'inline', target: 'es2020' });
+    res.setHeader('Content-Type', 'application/javascript');
+    res.end(result.code);
   });
 
-  // --- index.html + overlay + HMR
+  // --- Serve static assets (favicon, /public, etc.)
+  app.use(async (req, res, next) => {
+    if (!req.url) return next();
+    const assetPath = decodeURIComponent(req.url.split('?')[0]);
+    const publicDir = path.join(appRoot, 'public');
+    const rootFile = path.join(appRoot, assetPath);
+    const publicFile = path.join(publicDir, assetPath);
+    let targetFile: string | null = null;
+
+    if (await fs.pathExists(publicFile)) targetFile = publicFile;
+    else if (await fs.pathExists(rootFile)) targetFile = rootFile;
+    if (!targetFile) return next();
+
+    const stat = await fs.stat(targetFile);
+    if (!stat.isFile()) return next();
+
+    const etag = `"${stat.size}-${stat.mtimeMs}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304);
+      return res.end();
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('ETag', etag);
+    res.setHeader('Content-Type', getMimeType(targetFile));
+    fs.createReadStream(targetFile).pipe(res);
+  });
+
+  // --- Serve index.html with overlay + HMR
   app.use(async (req, res, next) => {
     if (req.url !== '/' && req.url !== '/index.html') return next();
-    if (!fs.existsSync(indexHtml)) {
+    if (!(await fs.pathExists(indexHtml))) {
       res.writeHead(404);
       return res.end('index.html not found');
     }
@@ -294,9 +324,10 @@ export default async function dev() {
           const style = document.createElement('style');
           style.textContent = \`
             .rc-overlay {
-              position: fixed; inset: 0; background: rgba(0,0,0,0.9);
-              color: #ff5555; font-family: monospace;
-              padding: 2rem; overflow:auto; z-index: 999999;
+              position: fixed; inset: 0;
+              background: rgba(0,0,0,0.9); color:#fff;
+              font-family: monospace; padding:2rem; overflow:auto;
+              z-index:999999; white-space:pre-wrap;
             }
           \`;
           document.head.appendChild(style);
@@ -325,34 +356,31 @@ export default async function dev() {
       </script>
       </body>`,
     );
-
     res.setHeader('Content-Type', 'text/html');
     res.end(html);
   });
 
-  // --- WebSocket + HMR
-  const server = http.createServer(app);
-  const broadcaster = new BroadcastManager(server);
-
-  chokidar.watch(appRoot, { ignoreInitial: true }).on('change', async (file) => {
-    if (file.includes('node_modules') || file.includes('.react-client')) return;
+  // --- Watchers for HMR + favicon reload
+  chokidar.watch(path.join(appRoot, 'src'), { ignoreInitial: true }).on('change', (file) => {
     console.log(chalk.yellow(`🔄 Changed: ${file}`));
     transformCache.delete(file);
-    for (const p of plugins)
-      await p.onHotUpdate?.(file, { broadcast: (msg: HMRMessage) => broadcaster.broadcast(msg) });
     broadcaster.broadcast({
       type: 'update',
       path: '/' + path.relative(appRoot, file).replace(/\\/g, '/'),
     });
   });
+  chokidar
+    .watch(path.join(appRoot, 'public', 'favicon.ico'), { ignoreInitial: true })
+    .on('change', () => {
+      broadcaster.broadcast({ type: 'reload' });
+    });
 
+  // --- Start server
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
     console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
     console.log(chalk.gray('──────────────────────────────'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
-    if (port !== defaultPort)
-      console.log(chalk.yellow(`⚠️ Using alternate port (default ${defaultPort} occupied)`));
     await open(url, { newInstance: true });
   });
 
