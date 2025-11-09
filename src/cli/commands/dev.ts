@@ -11,82 +11,82 @@
  * Keep this file linted & typed. Avoids manual react-dom/client hacks.
  */
 
-import esbuild from "esbuild";
-import connect, { NextHandleFunction } from "connect";
-import http from "http";
-import chokidar from "chokidar";
-import detectPort from "detect-port";
-import prompts from "prompts";
-import path from "path";
-import fs from "fs-extra";
-import open from "open";
-import chalk from "chalk";
-import { execSync } from "child_process";
-import { loadReactClientConfig } from "../../utils/loadConfig";
-import { BroadcastManager } from "../../server/broadcastManager";
-import type { ReactClientPlugin, ReactClientUserConfig } from "../../types/plugin";
+import esbuild from 'esbuild';
+import connect, { NextHandleFunction } from 'connect';
+import http from 'http';
+import chokidar from 'chokidar';
+import detectPort from 'detect-port';
+import prompts from 'prompts';
+import path from 'path';
+import fs from 'fs-extra';
+import open from 'open';
+import chalk from 'chalk';
+import { execSync } from 'child_process';
+import { loadReactClientConfig } from '../../utils/loadConfig';
+import { BroadcastManager } from '../../server/broadcastManager';
+import type { ReactClientPlugin, ReactClientUserConfig } from '../../types/plugin';
 
 type HMRMessage = {
-  type: "update" | "error" | "reload";
+  type: 'update' | 'error' | 'reload';
   path?: string;
   message?: string;
   stack?: string;
 };
 
-const RUNTIME_OVERLAY = "/src/runtime/overlay-runtime.js";
+const RUNTIME_OVERLAY = '/src/runtime/overlay-runtime.js';
 
 export default async function dev(): Promise<void> {
   const root = process.cwd();
   const userConfig = (await loadReactClientConfig(root)) as ReactClientUserConfig;
-  const appRoot = path.resolve(root, userConfig.root || ".");
+  const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = userConfig.server?.port ?? 2202;
 
   // cache dir for prebundled deps
-  const cacheDir = path.join(appRoot, ".react-client", "deps");
+  const cacheDir = path.join(appRoot, '.react-client', 'deps');
   await fs.ensureDir(cacheDir);
 
   // Detect entry (main.tsx / main.jsx)
-  const possible = ["src/main.tsx", "src/main.jsx"].map((p) => path.join(appRoot, p));
+  const possible = ['src/main.tsx', 'src/main.jsx'].map((p) => path.join(appRoot, p));
   const entry = possible.find((p) => fs.existsSync(p));
   if (!entry) {
-    console.error(chalk.red("❌ Entry not found: src/main.tsx or src/main.jsx"));
+    console.error(chalk.red('❌ Entry not found: src/main.tsx or src/main.jsx'));
     process.exit(1);
   }
-  const indexHtml = path.join(appRoot, "index.html");
+  const indexHtml = path.join(appRoot, 'index.html');
 
   // Select port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
     const response = await prompts({
-      type: "confirm",
-      name: "useNewPort",
+      type: 'confirm',
+      name: 'useNewPort',
       message: `Port ${defaultPort} is occupied. Use ${availablePort} instead?`,
       initial: true,
     });
     if (!response.useNewPort) {
-      console.log("🛑 Dev server cancelled.");
+      console.log('🛑 Dev server cancelled.');
       process.exit(0);
     }
   }
 
   // Ensure react-refresh runtime available (used by many templates)
   try {
-    require.resolve("react-refresh/runtime");
+    require.resolve('react-refresh/runtime');
   } catch {
-    console.warn(chalk.yellow("⚠️ react-refresh not found — installing react-refresh..."));
-    execSync("npm install react-refresh --no-audit --no-fund --silent", {
+    console.warn(chalk.yellow('⚠️ react-refresh not found — installing react-refresh...'));
+    execSync('npm install react-refresh --no-audit --no-fund --silent', {
       cwd: appRoot,
-      stdio: "inherit",
+      stdio: 'inherit',
     });
   }
 
   // Plugin system (core + user)
   const corePlugins: ReactClientPlugin[] = [
     {
-      name: "css-hmr",
+      name: 'css-hmr',
       async onTransform(code, id) {
-        if (id.endsWith(".css")) {
+        if (id.endsWith('.css')) {
           const escaped = JSON.stringify(code);
           return `
             const css = ${escaped};
@@ -112,14 +112,14 @@ export default async function dev(): Promise<void> {
     if (seen.has(file)) return seen;
     seen.add(file);
     try {
-      const code = await fs.readFile(file, "utf8");
+      const code = await fs.readFile(file, 'utf8');
       const matches = [
         ...code.matchAll(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g),
         ...code.matchAll(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g),
       ];
       for (const m of matches) {
         const dep = m[1];
-        if (!dep || dep.startsWith(".") || dep.startsWith("/")) continue;
+        if (!dep || dep.startsWith('.') || dep.startsWith('/')) continue;
         try {
           const resolved = require.resolve(dep, { paths: [appRoot] });
           await analyzeGraph(resolved, seen);
@@ -138,30 +138,30 @@ export default async function dev(): Promise<void> {
   async function prebundleDeps(deps: Set<string>): Promise<void> {
     if (!deps.size) return;
     const existingFiles = await fs.readdir(cacheDir);
-    const existing = new Set(existingFiles.map((f) => f.replace(/\.js$/, "")));
+    const existing = new Set(existingFiles.map((f) => f.replace(/\.js$/, '')));
     const missing = [...deps].filter((d) => !existing.has(d));
     if (!missing.length) return;
 
-    console.log(chalk.cyan("📦 Prebundling:"), missing.join(", "));
+    console.log(chalk.cyan('📦 Prebundling:'), missing.join(', '));
     await Promise.all(
       missing.map(async (dep) => {
         try {
           const entryPoint = require.resolve(dep, { paths: [appRoot] });
-          const outFile = path.join(cacheDir, dep.replace(/\//g, "_") + ".js");
+          const outFile = path.join(cacheDir, dep.replace(/\//g, '_') + '.js');
           await esbuild.build({
             entryPoints: [entryPoint],
             bundle: true,
-            platform: "browser",
-            format: "esm",
+            platform: 'browser',
+            format: 'esm',
             outfile: outFile,
             write: true,
-            target: ["es2020"],
+            target: ['es2020'],
           });
           console.log(chalk.green(`✅ Cached ${dep}`));
         } catch (err) {
           console.warn(chalk.yellow(`⚠️ Skipped ${dep}: ${(err as Error).message}`));
         }
-      })
+      }),
     );
   }
 
@@ -170,10 +170,10 @@ export default async function dev(): Promise<void> {
   await prebundleDeps(depsSet);
 
   // Watch package.json for changes to re-prebundle
-  const pkgPath = path.join(appRoot, "package.json");
+  const pkgPath = path.join(appRoot, 'package.json');
   if (await fs.pathExists(pkgPath)) {
-    chokidar.watch(pkgPath).on("change", async () => {
-      console.log(chalk.yellow("📦 package.json changed — rebuilding prebundle..."));
+    chokidar.watch(pkgPath).on('change', async () => {
+      console.log(chalk.yellow('📦 package.json changed — rebuilding prebundle...'));
       const newDeps = await analyzeGraph(entry);
       await prebundleDeps(newDeps);
     });
@@ -181,19 +181,19 @@ export default async function dev(): Promise<void> {
 
   // --- Serve /@modules/<dep> (prebundled or on-demand esbuild bundle)
   app.use((async (req, res, next) => {
-    const url = req.url ?? "";
-    if (!url.startsWith("/@modules/")) return next();
-    const id = url.replace(/^\/@modules\//, "");
+    const url = req.url ?? '';
+    if (!url.startsWith('/@modules/')) return next();
+    const id = url.replace(/^\/@modules\//, '');
     if (!id) {
       res.writeHead(400);
-      return res.end("// invalid module");
+      return res.end('// invalid module');
     }
 
     try {
-      const cacheFile = path.join(cacheDir, id.replace(/[\\/]/g, "_") + ".js");
+      const cacheFile = path.join(cacheDir, id.replace(/[\\/]/g, '_') + '.js');
       if (await fs.pathExists(cacheFile)) {
-        res.setHeader("Content-Type", "application/javascript");
-        res.end(await fs.readFile(cacheFile, "utf8"));
+        res.setHeader('Content-Type', 'application/javascript');
+        res.end(await fs.readFile(cacheFile, 'utf8'));
         return;
       }
 
@@ -203,16 +203,16 @@ export default async function dev(): Promise<void> {
         entryPoints: [entryResolved],
         bundle: true,
         write: false,
-        platform: "browser",
-        format: "esm",
-        target: ["es2020"],
+        platform: 'browser',
+        format: 'esm',
+        target: ['es2020'],
       });
 
-      const output = result.outputFiles?.[0]?.text ?? "";
+      const output = result.outputFiles?.[0]?.text ?? '';
       // Persist to cache so next request is faster
-      await fs.writeFile(cacheFile, output, "utf8");
+      await fs.writeFile(cacheFile, output, 'utf8');
 
-      res.setHeader("Content-Type", "application/javascript");
+      res.setHeader('Content-Type', 'application/javascript');
       res.end(output);
     } catch (err) {
       res.writeHead(500);
@@ -222,46 +222,51 @@ export default async function dev(): Promise<void> {
 
   // --- Serve runtime overlay (local file) so overlay-runtime.js is loaded automatically
   app.use((async (req, res, next) => {
-    const url = req.url ?? "";
-    if (url !== "/@runtime/overlay") return next();
+    const url = req.url ?? '';
+    if (url !== '/@runtime/overlay') return next();
     const overlayPath = path.join(appRoot, RUNTIME_OVERLAY);
     if (!(await fs.pathExists(overlayPath))) {
       res.writeHead(404);
-      return res.end("// overlay-runtime not found");
+      return res.end('// overlay-runtime not found');
     }
-    res.setHeader("Content-Type", "application/javascript");
-    res.end(await fs.readFile(overlayPath, "utf8"));
+    res.setHeader('Content-Type', 'application/javascript');
+    res.end(await fs.readFile(overlayPath, 'utf8'));
   }) as NextHandleFunction);
 
   // --- minimal /@source-map: return snippet around requested line of original source file
   app.use((async (req, res, next) => {
-    const url = req.url ?? "";
-    if (!url.startsWith("/@source-map")) return next();
+    const url = req.url ?? '';
+    if (!url.startsWith('/@source-map')) return next();
     // expected query: ?file=/src/xyz.tsx&line=12&column=3
     try {
-      const full = req.url ?? "";
+      const full = req.url ?? '';
       const parsed = new URL(full, `http://localhost:${port}`);
-      const file = parsed.searchParams.get("file") ?? "";
-      const lineStr = parsed.searchParams.get("line") ?? "0";
+      const file = parsed.searchParams.get('file') ?? '';
+      const lineStr = parsed.searchParams.get('line') ?? '0';
       const lineNum = Number(lineStr) || 0;
       if (!file) {
         res.writeHead(400);
-        return res.end("{}");
+        return res.end('{}');
       }
-      const filePath = path.join(appRoot, file.startsWith("/") ? file.slice(1) : file);
+      const filePath = path.join(appRoot, file.startsWith('/') ? file.slice(1) : file);
       if (!(await fs.pathExists(filePath))) {
         res.writeHead(404);
-        return res.end("{}");
+        return res.end('{}');
       }
-      const src = await fs.readFile(filePath, "utf8");
+      const src = await fs.readFile(filePath, 'utf8');
       const lines = src.split(/\r?\n/);
       const start = Math.max(0, lineNum - 3 - 1);
       const end = Math.min(lines.length, lineNum + 2);
-      const snippet = lines.slice(start, end).map((l, i) => {
-        const ln = start + i + 1;
-        return `<span class="line-number">${ln}</span> ${l.replace(/</g, "&lt;").replace(/>/g, "&gt;")}`;
-      }).join("\n");
-      res.setHeader("Content-Type", "application/json");
+      const snippet = lines
+        .slice(start, end)
+        .map((l, i) => {
+          const ln = start + i + 1;
+          return `<span class="line-number">${ln}</span> ${l
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')}`;
+        })
+        .join('\n');
+      res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ source: file, line: lineNum, column: 0, snippet }));
     } catch (err) {
       res.writeHead(500);
@@ -271,14 +276,14 @@ export default async function dev(): Promise<void> {
 
   // --- Serve /src/* files (on-the-fly transform + bare import rewrite)
   app.use((async (req, res, next) => {
-    const url = req.url ?? "";
-    if (!url.startsWith("/src/") && !url.endsWith(".css")) return next();
+    const url = req.url ?? '';
+    if (!url.startsWith('/src/') && !url.endsWith('.css')) return next();
 
-    const raw = decodeURIComponent((req.url ?? "").split("?")[0]);
-    let filePath = path.join(appRoot, raw.replace(/^\//, ""));
+    const raw = decodeURIComponent((req.url ?? '').split('?')[0]);
+    const filePath = path.join(appRoot, raw.replace(/^\//, ''));
     // Try file extensions if not exact file
-    const exts = ["", ".tsx", ".ts", ".jsx", ".js", ".css"];
-    let found = "";
+    const exts = ['', '.tsx', '.ts', '.jsx', '.js', '.css'];
+    let found = '';
     for (const ext of exts) {
       if (await fs.pathExists(filePath + ext)) {
         found = filePath + ext;
@@ -288,12 +293,15 @@ export default async function dev(): Promise<void> {
     if (!found) return next();
 
     try {
-      let code = await fs.readFile(found, "utf8");
+      let code = await fs.readFile(found, 'utf8');
 
       // rewrite bare imports -> /@modules/<dep>
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`);
+        .replace(
+          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
+          (_m, dep) => `import("/@modules/${dep}")`,
+        );
 
       // run plugin transforms
       for (const p of plugins) {
@@ -302,22 +310,23 @@ export default async function dev(): Promise<void> {
           // keep typed as string
           // eslint-disable-next-line no-await-in-loop
           const out = await p.onTransform(code, found);
-          if (typeof out === "string") code = out;
+          if (typeof out === 'string') code = out;
         }
       }
 
       // choose loader by extension
       const ext = path.extname(found).toLowerCase();
-      const loader: esbuild.Loader = ext === ".ts" ? "ts" : ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : "js";
+      const loader: esbuild.Loader =
+        ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
 
       const result = await esbuild.transform(code, {
         loader,
-        sourcemap: "inline",
-        target: ["es2020"],
+        sourcemap: 'inline',
+        target: ['es2020'],
       });
 
       transformCache.set(found, result.code);
-      res.setHeader("Content-Type", "application/javascript");
+      res.setHeader('Content-Type', 'application/javascript');
       res.end(result.code);
     } catch (err) {
       const e = err as Error;
@@ -328,18 +337,18 @@ export default async function dev(): Promise<void> {
 
   // --- Serve index.html with overlay + HMR client injection
   app.use((async (req, res, next) => {
-    const url = req.url ?? "";
-    if (url !== "/" && url !== "/index.html") return next();
+    const url = req.url ?? '';
+    if (url !== '/' && url !== '/index.html') return next();
     if (!(await fs.pathExists(indexHtml))) {
       res.writeHead(404);
-      return res.end("index.html not found");
+      return res.end('index.html not found');
     }
     try {
-      let html = await fs.readFile(indexHtml, "utf8");
+      let html = await fs.readFile(indexHtml, 'utf8');
       // inject overlay runtime and HMR client if not already present
-      if (!html.includes("/@runtime/overlay")) {
+      if (!html.includes('/@runtime/overlay')) {
         html = html.replace(
-          "</body>",
+          '</body>',
           `\n<script type="module" src="/@runtime/overlay"></script>\n<script type="module">
   const ws = new WebSocket("ws://" + location.host);
   ws.onmessage = (e) => {
@@ -351,10 +360,10 @@ export default async function dev(): Promise<void> {
       import(msg.path + "?t=" + Date.now());
     }
   };
-</script>\n</body>`
+</script>\n</body>`,
         );
       }
-      res.setHeader("Content-Type", "text/html");
+      res.setHeader('Content-Type', 'text/html');
       res.end(html);
     } catch (err) {
       res.writeHead(500);
@@ -367,8 +376,8 @@ export default async function dev(): Promise<void> {
   const broadcaster = new BroadcastManager(server);
 
   // Watch files and trigger plugin onHotUpdate + broadcast HMR message
-  const watcher = chokidar.watch(path.join(appRoot, "src"), { ignoreInitial: true });
-  watcher.on("change", async (file) => {
+  const watcher = chokidar.watch(path.join(appRoot, 'src'), { ignoreInitial: true });
+  watcher.on('change', async (file) => {
     transformCache.delete(file);
     // plugin hook onHotUpdate optionally
     for (const p of plugins) {
@@ -386,22 +395,22 @@ export default async function dev(): Promise<void> {
         } catch (err) {
           // plugin errors shouldn't crash server
           // eslint-disable-next-line no-console
-          console.warn("plugin onHotUpdate error:", (err as Error).message);
+          console.warn('plugin onHotUpdate error:', (err as Error).message);
         }
       }
     }
 
     // default: broadcast update for changed file
     broadcaster.broadcast({
-      type: "update",
-      path: "/" + path.relative(appRoot, file).replace(/\\/g, "/"),
+      type: 'update',
+      path: '/' + path.relative(appRoot, file).replace(/\\/g, '/'),
     });
   });
 
   // start server
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
-    console.log(chalk.cyan.bold("\n🚀 React Client Dev Server"));
+    console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
     if (userConfig.server?.open !== false) {
       // open default browser
@@ -414,8 +423,8 @@ export default async function dev(): Promise<void> {
   });
 
   // graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log(chalk.red("\n🛑 Shutting down..."));
+  process.on('SIGINT', async () => {
+    console.log(chalk.red('\n🛑 Shutting down...'));
     watcher.close();
     broadcaster.close();
     server.close();
