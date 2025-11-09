@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.28](https://github.com/venkateshsundaram/react-client/compare/v1.0.27...v1.0.28) (2025-11-09)
+
+
+### Bug Fixes
+
+* react-client issue fix ([c00a35d](https://github.com/venkateshsundaram/react-client/commit/c00a35ddfffa6297679acbe1a43b9d90728b6a13))
+* react-client issue fix ([e7b3023](https://github.com/venkateshsundaram/react-client/commit/e7b302320f0bdfe8ebfd7b930c2f997e2606f774))
+
 ### [1.0.27](https://github.com/venkateshsundaram/react-client/compare/v1.0.26...v1.0.27) (2025-11-09)
 
 
