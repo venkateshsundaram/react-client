@@ -194,31 +194,33 @@ export default async function dev(): Promise<void> {
         return res.end(await fs.readFile(cacheFile, 'utf8'));
       }
 
-      // 🧠 Smart module resolver: handles subpaths like react-dom/client, react/jsx-runtime, etc.
+      // 🧠 Handle subpath imports correctly (like react-dom/client)
       let entryFile: string | null = null;
 
       try {
-        // Try direct require.resolve first (works for most)
         entryFile = require.resolve(id, { paths: [appRoot] });
       } catch {
-        // Handle subpath imports
         const parts = id.split('/');
         const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
         const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
-        const pkgJson = require.resolve(`${pkgRoot}/package.json`, { paths: [appRoot] });
-        const pkgDir = path.dirname(pkgJson);
+        const pkgJsonPath = require.resolve(`${pkgRoot}/package.json`, { paths: [appRoot] });
+        const pkgDir = path.dirname(pkgJsonPath);
 
-        const tryFiles = [
-          path.join(pkgDir, subPath),
-          path.join(pkgDir, subPath, 'index.js'),
-          path.join(pkgDir, subPath + '.js'),
-          path.join(pkgDir, subPath + '.mjs'),
-        ];
-
-        for (const f of tryFiles) {
-          if (await fs.pathExists(f)) {
-            entryFile = f;
-            break;
+        // Special case: react-dom/client
+        if (pkgRoot === 'react-dom' && subPath === 'client') {
+          entryFile = path.join(pkgDir, 'client.js');
+        } else {
+          const candidates = [
+            path.join(pkgDir, subPath),
+            path.join(pkgDir, subPath, 'index.js'),
+            path.join(pkgDir, subPath + '.js'),
+            path.join(pkgDir, subPath + '.mjs'),
+          ];
+          for (const f of candidates) {
+            if (await fs.pathExists(f)) {
+              entryFile = f;
+              break;
+            }
           }
         }
       }
@@ -243,6 +245,16 @@ export default async function dev(): Promise<void> {
       res.writeHead(500);
       res.end(`// Failed to resolve module ${id}: ${(err as Error).message}`);
     }
+  });
+
+  app.use(async (req, res, next) => {
+    if (req.url?.startsWith('/@prismjs')) {
+      const prismPath = require.resolve('prismjs', { paths: [appRoot] });
+      const code = await fs.readFile(prismPath, 'utf8');
+      res.setHeader('Content-Type', 'application/javascript');
+      return res.end(code);
+    }
+    next();
   });
 
   // --- Serve runtime overlay (local file) so overlay-runtime.js is loaded automatically
