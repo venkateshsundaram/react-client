@@ -13,13 +13,48 @@ import { loadReactClientConfig } from '../../utils/loadConfig';
 import { BroadcastManager, HMRMessage } from '../../server/broadcastManager';
 import type { ReactClientPlugin } from '../../types/plugin';
 
+// 🧠 Browser polyfills for Node built-ins
+const NODE_POLYFILLS: Record<string, string> = {
+  buffer: 'buffer/',
+  process: 'process/browser',
+  path: 'path-browserify',
+  fs: 'browserify-fs',
+  os: 'os-browserify/browser',
+  stream: 'stream-browserify',
+  util: 'util/',
+  url: 'url/',
+  assert: 'assert/',
+  crypto: 'crypto-browserify',
+  events: 'events/',
+  constants: 'constants-browserify',
+  querystring: 'querystring-es3',
+  zlib: 'browserify-zlib',
+};
+
+// List of NPM packages required for polyfills
+const POLYFILL_PACKAGES = [
+  'buffer',
+  'process',
+  'path-browserify',
+  'browserify-fs',
+  'os-browserify',
+  'stream-browserify',
+  'util',
+  'url',
+  'assert',
+  'crypto-browserify',
+  'events',
+  'constants-browserify',
+  'querystring-es3',
+  'browserify-zlib',
+];
+
 export default async function dev() {
   const root = process.cwd();
   const userConfig = await loadReactClientConfig(root);
   const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = userConfig.server?.port || 5173;
   const cacheDir = path.join(appRoot, '.react-client', 'deps');
-  const pkgFile = path.join(appRoot, 'package.json');
   await fs.ensureDir(cacheDir);
 
   // Detect entry file
@@ -29,10 +64,9 @@ export default async function dev() {
     console.error(chalk.red('❌ No entry found: src/main.tsx or src/main.jsx'));
     process.exit(1);
   }
-
   const indexHtml = path.join(appRoot, 'index.html');
 
-  // Detect open port
+  // Detect available port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
@@ -48,7 +82,7 @@ export default async function dev() {
     }
   }
 
-  // Ensure react-refresh installed
+  // 🧩 Auto-install react-refresh
   try {
     require.resolve('react-refresh/runtime');
   } catch {
@@ -58,6 +92,32 @@ export default async function dev() {
       stdio: 'inherit',
     });
     console.log(chalk.green('✅ react-refresh installed successfully.'));
+  }
+
+  // 🧩 Auto-install missing polyfill packages
+  const missingPolyfills = POLYFILL_PACKAGES.filter((pkg) => {
+    try {
+      require.resolve(pkg, { paths: [appRoot] });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+
+  if (missingPolyfills.length > 0) {
+    console.log(chalk.yellow('⚙️ Installing missing polyfill packages...'));
+    console.log(chalk.gray('📦 ' + missingPolyfills.join(', ')));
+    try {
+      execSync(`npm install ${missingPolyfills.join(' ')} --no-audit --no-fund --silent`, {
+        cwd: appRoot,
+        stdio: 'inherit',
+      });
+      console.log(chalk.green('✅ Polyfills installed successfully.'));
+    } catch (err) {
+      console.error(chalk.red('❌ Failed to install polyfills automatically.'));
+      console.error(err);
+      process.exit(1);
+    }
   }
 
   // --- Plugins
@@ -85,129 +145,76 @@ export default async function dev() {
   const app = connect();
   const transformCache = new Map<string, string>();
 
-  // 🧠 Deep dependency graph analyzer
-  async function analyzeGraph(file: string, seen = new Set<string>()): Promise<Set<string>> {
-    if (seen.has(file)) return seen;
-    seen.add(file);
-    const code = await fs.readFile(file, 'utf8');
+  // 🧱 Polyfilled module builder
+  async function buildModuleWithSafeWrapper(id: string): Promise<string> {
+    const cacheFile = path.join(cacheDir, id.replace(/\//g, '_') + '.js');
+    if (await fs.pathExists(cacheFile)) return fs.readFile(cacheFile, 'utf8');
 
-    const matches = [
-      ...code.matchAll(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g),
-      ...code.matchAll(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g),
-    ];
-
-    for (const m of matches) {
-      const dep = m[1];
-      if (!dep || dep.startsWith('.') || dep.startsWith('/')) continue;
-
-      try {
-        const resolved = require.resolve(dep, { paths: [appRoot] });
-        await analyzeGraph(resolved, seen);
-      } catch {
-        seen.add(dep); // bare dependency
-      }
-    }
-
-    return seen;
-  }
-
-  // 📦 Smart prebundle cache (parallelized)
-  async function prebundleDeps(deps: Set<string>) {
-    if (!deps.size) return;
-
-    const cached = (await fs.readdir(cacheDir)).map((f) => f.replace('.js', ''));
-    const missing = [...deps].filter((d) => !cached.includes(d));
-    if (!missing.length) {
-      console.log(chalk.green('✅ All dependencies already prebundled.'));
-      return;
-    }
-
-    console.log(chalk.cyan('📦 Prebundling:'), missing.join(', '));
-    await Promise.all(
-      missing.map(async (dep) => {
-        try {
-          const entryPath = require.resolve(dep, { paths: [appRoot] });
-          const outFile = path.join(cacheDir, dep + '.js');
-          await esbuild.build({
-            entryPoints: [entryPath],
-            bundle: true,
-            platform: 'browser',
-            format: 'esm',
-            outfile: outFile,
-            write: true,
-            target: 'es2020',
-          });
-          console.log(chalk.green(`✅ Cached ${dep}`));
-        } catch (err) {
-          const e = err as Error;
-          console.warn(chalk.yellow(`⚠️ Skipped ${dep}: ${e.message}`));
-        }
-      }),
-    );
-  }
-
-  // 🧩 Prewarm Graph
-  const deps = await analyzeGraph(entry);
-  await prebundleDeps(deps);
-
-  // Auto rebuild on package.json change
-  chokidar.watch(pkgFile).on('change', async () => {
-    console.log(chalk.yellow('📦 package.json changed — rebuilding prebundle cache...'));
-    const newDeps = await analyzeGraph(entry);
-    await prebundleDeps(newDeps);
-  });
-
-  // --- Serve /@modules/
-  app.use('/@modules/', async (req, res, next) => {
-    const id = req.url?.replace(/^\/(@modules\/)?/, '');
-    if (!id) return next();
-
-    try {
-      const cacheFile = path.join(cacheDir, id.replace(/\//g, '_') + '.js');
-      if (await fs.pathExists(cacheFile)) {
-        res.setHeader('Content-Type', 'application/javascript');
-        return res.end(await fs.readFile(cacheFile));
-      }
-
-      let entryPath: string | null = null;
-      try {
-        entryPath = require.resolve(id, { paths: [appRoot] });
-      } catch {
-        if (id === 'react') entryPath = require.resolve('react');
-        else if (id === 'react-dom' || id === 'react-dom/client')
-          entryPath = require.resolve('react-dom');
-      }
-
-      if (!entryPath) throw new Error(`Module ${id} not found.`);
-
+    // 🧠 Polyfill detection
+    const polyId = NODE_POLYFILLS[id];
+    if (polyId) {
+      console.log(chalk.gray(`🧩 Using polyfill for ${id}: ${polyId}`));
       const result = await esbuild.build({
-        entryPoints: [entryPath],
+        entryPoints: [require.resolve(polyId, { paths: [appRoot] })],
         bundle: true,
         platform: 'browser',
         format: 'esm',
         target: 'es2020',
         write: false,
       });
+      const polyCode = result.outputFiles[0].text;
+      await fs.writeFile(cacheFile, polyCode, 'utf8');
+      return polyCode;
+    }
 
-      let code = result.outputFiles[0].text;
-
-      // 🩹 Fixed react-dom/client shim (no duplicate export)
-      if (id === 'react-dom/client') {
-        code += `
-          // React Client auto-shim for React 18+
-          import * as ReactDOMClient from '/@modules/react-dom';
-          if (!('createRoot' in ReactDOMClient) && ReactDOMClient.default) {
-            Object.assign(ReactDOMClient, ReactDOMClient.default);
-          }
-          export const createRoot =
-            ReactDOMClient.createRoot ||
-            ReactDOMClient.default?.createRoot ||
-            (() => { throw new Error('ReactDOM.createRoot not found'); });
-          export default ReactDOMClient;
-        `;
+    // 🧱 Normal dependency
+    let entryPath: string | null = null;
+    try {
+      entryPath = require.resolve(id, { paths: [appRoot] });
+    } catch {
+      const base = id.split('/')[0];
+      try {
+        entryPath = require.resolve(base, { paths: [appRoot] });
+      } catch {
+        entryPath = null;
       }
+    }
 
-      await fs.writeFile(cacheFile, code, 'utf8');
+    if (!entryPath) throw new Error(`Module ${id} not found (resolve failed)`);
+
+    const result = await esbuild.build({
+      entryPoints: [entryPath],
+      bundle: true,
+      platform: 'browser',
+      format: 'esm',
+      target: 'es2020',
+      write: false,
+    });
+
+    const originalCode = result.outputFiles[0].text;
+    const isSubpath = id.includes('/');
+    let finalCode = originalCode;
+
+    if (isSubpath) {
+      const base = id.split('/')[0];
+      finalCode += `
+        // --- react-client auto wrapper for subpath: ${id}
+        import * as __base from '/@modules/${base}';
+        export const __rc_dynamic = __base;
+        export default __base.default || __base;
+      `;
+    }
+
+    await fs.writeFile(cacheFile, finalCode, 'utf8');
+    return finalCode;
+  }
+
+  // --- /@modules/
+  app.use('/@modules/', async (req, res, next) => {
+    const id = req.url?.replace(/^\/(@modules\/)?/, '');
+    if (!id) return next();
+    try {
+      const code = await buildModuleWithSafeWrapper(id);
       res.setHeader('Content-Type', 'application/javascript');
       res.end(code);
     } catch (err) {
@@ -218,13 +225,13 @@ export default async function dev() {
     }
   });
 
-  // --- Serve /src files dynamically
+  // --- Universal transform for all project files
   app.use(async (req, res, next) => {
-    if (!req.url || (!req.url.startsWith('/src/') && !req.url.endsWith('.css'))) return next();
+    const urlPath = decodeURIComponent(req.url!.split('?')[0]);
+    if (urlPath.includes('node_modules')) return next();
 
-    const rawPath = decodeURIComponent(req.url.split('?')[0]);
-    let filePath = path.join(appRoot, rawPath);
-    const possibleExts = ['', '.tsx', '.ts', '.jsx', '.js'];
+    let filePath = path.join(appRoot, urlPath);
+    const possibleExts = ['', '.tsx', '.ts', '.jsx', '.js', '.css'];
     for (const ext of possibleExts) {
       if (await fs.pathExists(filePath + ext)) {
         filePath += ext;
@@ -237,12 +244,12 @@ export default async function dev() {
     try {
       let code = await fs.readFile(filePath, 'utf8');
 
-      // Rewrite bare imports → /@modules/*
+      // Rewrite bare imports
       code = code
-        .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_match, dep) => `from "/@modules/${dep}"`)
+        .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
         .replace(
           /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
-          (_match, dep) => `import("/@modules/${dep}")`,
+          (_m, dep) => `import("/@modules/${dep}")`,
         );
 
       for (const p of plugins) if (p.onTransform) code = await p.onTransform(code, filePath);
@@ -270,7 +277,7 @@ export default async function dev() {
     }
   });
 
-  // --- Serve index.html + overlay + HMR
+  // --- index.html + overlay + HMR
   app.use(async (req, res, next) => {
     if (req.url !== '/' && req.url !== '/index.html') return next();
     if (!fs.existsSync(indexHtml)) {
@@ -287,9 +294,9 @@ export default async function dev() {
           const style = document.createElement('style');
           style.textContent = \`
             .rc-overlay {
-              position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-              background: rgba(0,0,0,0.9); color: #ff5555;
-              font-family: monospace; padding: 2rem; overflow:auto; z-index: 999999;
+              position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+              color: #ff5555; font-family: monospace;
+              padding: 2rem; overflow:auto; z-index: 999999;
             }
           \`;
           document.head.appendChild(style);
@@ -327,12 +334,12 @@ export default async function dev() {
   const server = http.createServer(app);
   const broadcaster = new BroadcastManager(server);
 
-  chokidar.watch(path.join(appRoot, 'src'), { ignoreInitial: true }).on('change', async (file) => {
+  chokidar.watch(appRoot, { ignoreInitial: true }).on('change', async (file) => {
+    if (file.includes('node_modules') || file.includes('.react-client')) return;
     console.log(chalk.yellow(`🔄 Changed: ${file}`));
     transformCache.delete(file);
-    for (const p of plugins) {
+    for (const p of plugins)
       await p.onHotUpdate?.(file, { broadcast: (msg: HMRMessage) => broadcaster.broadcast(msg) });
-    }
     broadcaster.broadcast({
       type: 'update',
       path: '/' + path.relative(appRoot, file).replace(/\\/g, '/'),
@@ -344,6 +351,8 @@ export default async function dev() {
     console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
     console.log(chalk.gray('──────────────────────────────'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
+    if (port !== defaultPort)
+      console.log(chalk.yellow(`⚠️ Using alternate port (default ${defaultPort} occupied)`));
     await open(url, { newInstance: true });
   });
 
