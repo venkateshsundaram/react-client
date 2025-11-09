@@ -247,21 +247,11 @@ export default async function dev(): Promise<void> {
     }
   });
 
-  app.use(async (req, res, next) => {
-    if (req.url?.startsWith('/@prismjs')) {
-      const prismPath = require.resolve('prismjs', { paths: [appRoot] });
-      const code = await fs.readFile(prismPath, 'utf8');
-      res.setHeader('Content-Type', 'application/javascript');
-      return res.end(code);
-    }
-    next();
-  });
 
-  // --- Serve runtime overlay (local file) so overlay-runtime.js is loaded automatically
-  // --- Serve runtime overlay (inline in dev server)
+
+
+  // --- Serve runtime overlay (inline, no external dependencies)
   const OVERLAY_RUNTIME = `
-import "/@prismjs";
-
 const overlayId = "__rc_error_overlay__";
 
 const style = document.createElement("style");
@@ -280,11 +270,11 @@ style.textContent = \`
   }
   @keyframes fadeIn { from {opacity: 0;} to {opacity: 1;} }
   #\${overlayId} h2 { color: #ff6b6b; margin-bottom: 16px; }
-  #\${overlayId} pre { background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px; }
+  #\${overlayId} pre { background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px; overflow-x: auto; }
   #\${overlayId} a { color: #9cf; text-decoration: underline; }
   #\${overlayId} .frame { margin: 12px 0; }
   #\${overlayId} .frame-file { color: #ffa500; cursor: pointer; font-weight: bold; margin-bottom: 4px; }
-  .line-number { opacity: 0.5; margin-right: 10px; }
+  .line-number { opacity: 0.5; margin-right: 10px; display: inline-block; width: 2em; text-align: right; }
 \`;
 document.head.appendChild(style);
 
@@ -304,6 +294,14 @@ async function mapStackFrame(frame) {
     };
   }
   return frame;
+}
+
+// 🔹 minimal inline syntax highlighting (keywords only)
+function highlightJS(code) {
+  return code
+    .replace(/(const|let|var|function|return|import|from|export|class|new|await|async|if|else|for|while|try|catch|throw)/g, '<span style="color:#ffb86c;">$1</span>')
+    .replace(/("[^"]*"|'[^']*')/g, '<span style="color:#8be9fd;">$1</span>')
+    .replace(/(\\/\\/.*)/g, '<span style="opacity:0.6;">$1</span>');
 }
 
 async function renderOverlay(err) {
@@ -331,8 +329,7 @@ async function renderOverlay(err) {
 
     if (mapped.snippet) {
       const pre = document.createElement("pre");
-      pre.classList.add("language-jsx");
-      pre.innerHTML = Prism.highlight(mapped.snippet, Prism.languages.jsx, "jsx");
+      pre.innerHTML = highlightJS(mapped.snippet);
       frameEl.appendChild(pre);
     }
 

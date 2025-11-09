@@ -91,7 +91,6 @@ Each template is pre-configured for esbuild, HMR, and fast bootstrapping.
 - 🔍 **Source Map Stack Mapping** — Maps runtime errors to original TS/JS source lines  
 - 💬 **Auto Port Detection** — Prompts when default port 2202 is occupied  
 - 🧠 **Smart Config Loader** — Detects project root, compiles `.ts` configs dynamically  
-- 🎨 **PrismJS Highlighting** — For pretty overlay code frames  
 - 🔌 **Plugin Hook System** — Extendable with `configResolved`, `transform`, `buildEnd`  
 
 ---
@@ -104,7 +103,6 @@ Each template is pre-configured for esbuild, HMR, and fast bootstrapping.
 2. **Connect** serves files and APIs (React Refresh runtime, overlay, source-map).  
 3. **WebSocket** pushes HMR updates and overlay messages.  
 4. **Chokidar** watches `/src` for changes and triggers rebuilds.  
-5. **Overlay UI** (via PrismJS) displays mapped stack frames with syntax highlighting.
 
 ---
 
