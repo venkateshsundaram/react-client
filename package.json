@@ -102,7 +102,6 @@
     "esbuild": "^0.25.12",
     "fs-extra": "^11.3.2",
     "open": "^8.4.2",
-    "prismjs": "^1.30.0",
     "prompts": "^2.4.2",
     "react-refresh": "^0.14.0",
     "serve-static": "^1.15.0",
