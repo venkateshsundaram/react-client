@@ -33,8 +33,6 @@ type HMRMessage = {
   stack?: string;
 };
 
-const RUNTIME_OVERLAY = '/src/runtime/overlay-runtime.js';
-
 export default async function dev(): Promise<void> {
   const root = process.cwd();
   const userConfig = (await loadReactClientConfig(root)) as ReactClientUserConfig;
@@ -180,9 +178,10 @@ export default async function dev(): Promise<void> {
   }
 
   // --- Serve /@modules/<dep> (prebundled or on-demand esbuild bundle)
-  app.use((async (req, res, next) => {
+  app.use(async (req, res, next) => {
     const url = req.url ?? '';
     if (!url.startsWith('/@modules/')) return next();
+
     const id = url.replace(/^\/@modules\//, '');
     if (!id) {
       res.writeHead(400);
@@ -193,23 +192,44 @@ export default async function dev(): Promise<void> {
       const cacheFile = path.join(cacheDir, id.replace(/[\\/]/g, '_') + '.js');
       if (await fs.pathExists(cacheFile)) {
         res.setHeader('Content-Type', 'application/javascript');
-        res.end(await fs.readFile(cacheFile, 'utf8'));
-        return;
+        return res.end(await fs.readFile(cacheFile, 'utf8'));
       }
 
-      // Resolve and bundle on-demand
-      const entryResolved = require.resolve(id, { paths: [appRoot] });
+      // 🧠 Handle subpaths correctly: react-dom/client, react/jsx-runtime, etc.
+      let entryPath: string | null = null;
+
+      try {
+        entryPath = require.resolve(id, { paths: [appRoot] });
+      } catch {
+        // Fallback: handle packages with subpaths dynamically
+        const parts = id.split('/');
+        if (parts.length > 1) {
+          const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+          const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
+          const pkgDir = path.dirname(
+            require.resolve(`${pkgRoot}/package.json`, { paths: [appRoot] }),
+          );
+
+          // resolve full subpath from package root
+          const tryPath = path.join(pkgDir, subPath);
+          if (await fs.pathExists(tryPath + '.js')) entryPath = tryPath + '.js';
+          else if (await fs.pathExists(tryPath + '.mjs')) entryPath = tryPath + '.mjs';
+          else if (await fs.pathExists(tryPath + '/index.js')) entryPath = tryPath + '/index.js';
+        }
+      }
+
+      if (!entryPath) throw new Error(`Could not resolve ${id}`);
+
       const result = await esbuild.build({
-        entryPoints: [entryResolved],
+        entryPoints: [entryPath],
         bundle: true,
-        write: false,
         platform: 'browser',
         format: 'esm',
+        write: false,
         target: ['es2020'],
       });
 
       const output = result.outputFiles?.[0]?.text ?? '';
-      // Persist to cache so next request is faster
       await fs.writeFile(cacheFile, output, 'utf8');
 
       res.setHeader('Content-Type', 'application/javascript');
@@ -218,20 +238,21 @@ export default async function dev(): Promise<void> {
       res.writeHead(500);
       res.end(`// Failed to resolve module ${id}: ${(err as Error).message}`);
     }
-  }) as NextHandleFunction);
+  });
 
   // --- Serve runtime overlay (local file) so overlay-runtime.js is loaded automatically
-  app.use((async (req, res, next) => {
-    const url = req.url ?? '';
-    if (url !== '/@runtime/overlay') return next();
-    const overlayPath = path.join(appRoot, RUNTIME_OVERLAY);
-    if (!(await fs.pathExists(overlayPath))) {
-      res.writeHead(404);
-      return res.end('// overlay-runtime not found');
+  app.use(async (req, res, next) => {
+    if (req.url === '/@runtime/overlay') {
+      const overlayPath = path.join(appRoot, 'src/runtime/overlay-runtime.js');
+      if (!(await fs.pathExists(overlayPath))) {
+        res.writeHead(404);
+        return res.end('// overlay-runtime.js not found');
+      }
+      res.setHeader('Content-Type', 'application/javascript');
+      return res.end(await fs.readFile(overlayPath, 'utf8'));
     }
-    res.setHeader('Content-Type', 'application/javascript');
-    res.end(await fs.readFile(overlayPath, 'utf8'));
-  }) as NextHandleFunction);
+    next();
+  });
 
   // --- minimal /@source-map: return snippet around requested line of original source file
   app.use((async (req, res, next) => {
