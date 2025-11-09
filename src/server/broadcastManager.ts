@@ -37,11 +37,9 @@ export class BroadcastManager<T extends BroadcastMessage = HMRMessage> {
 
     this.wss.on('connection', (ws: NodeWebSocket) => {
       this.clients.add(ws);
-      console.log(chalk.gray('🔌 Client connected'));
 
       ws.on('close', () => {
         this.clients.delete(ws);
-        console.log(chalk.gray('❎ Client disconnected'));
       });
 
       ws.on('error', (err) => {

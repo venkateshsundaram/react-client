@@ -22,7 +22,7 @@ export default async function dev() {
   const pkgFile = path.join(appRoot, 'package.json');
   await fs.ensureDir(cacheDir);
 
-  // Detect entry
+  // Detect entry file
   const possibleEntries = ['src/main.tsx', 'src/main.jsx'];
   const entry = possibleEntries.map((p) => path.join(appRoot, p)).find((p) => fs.existsSync(p));
   if (!entry) {
@@ -32,7 +32,7 @@ export default async function dev() {
 
   const indexHtml = path.join(appRoot, 'index.html');
 
-  // Detect port
+  // Detect open port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
@@ -60,7 +60,7 @@ export default async function dev() {
     console.log(chalk.green('✅ react-refresh installed successfully.'));
   }
 
-  // Core plugin: CSS HMR
+  // --- Plugins
   const corePlugins: ReactClientPlugin[] = [
     {
       name: 'css-hmr',
@@ -82,28 +82,41 @@ export default async function dev() {
   const userPlugins = Array.isArray(userConfig.plugins) ? userConfig.plugins : [];
   const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
 
-  // Connect app
   const app = connect();
   const transformCache = new Map<string, string>();
 
-  // 🧠 Prewarm: analyze imports before first run
-  async function analyzeImports(entryFile: string): Promise<string[]> {
-    const entryCode = await fs.readFile(entryFile, 'utf8');
-    const importMatches = [
-      ...entryCode.matchAll(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g),
-      ...entryCode.matchAll(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g),
+  // 🧠 Deep dependency graph analyzer
+  async function analyzeGraph(file: string, seen = new Set<string>()): Promise<Set<string>> {
+    if (seen.has(file)) return seen;
+    seen.add(file);
+    const code = await fs.readFile(file, 'utf8');
+
+    const matches = [
+      ...code.matchAll(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g),
+      ...code.matchAll(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g),
     ];
-    const deps = [...new Set(importMatches.map((m) => m[1]))];
-    console.log(chalk.gray(`🧩 Found ${deps.length} direct imports:`), deps.join(', '));
-    return deps;
+
+    for (const m of matches) {
+      const dep = m[1];
+      if (!dep || dep.startsWith('.') || dep.startsWith('/')) continue;
+
+      try {
+        const resolved = require.resolve(dep, { paths: [appRoot] });
+        await analyzeGraph(resolved, seen);
+      } catch {
+        seen.add(dep); // bare dependency
+      }
+    }
+
+    return seen;
   }
 
-  // 📦 Smart prebundle cache
-  async function prebundleDeps(deps: string[]) {
-    if (!deps.length) return;
-    const cached = (await fs.readdir(cacheDir)).map((f) => f.replace('.js', ''));
-    const missing = deps.filter((d) => !cached.includes(d));
+  // 📦 Smart prebundle cache (parallelized)
+  async function prebundleDeps(deps: Set<string>) {
+    if (!deps.size) return;
 
+    const cached = (await fs.readdir(cacheDir)).map((f) => f.replace('.js', ''));
+    const missing = [...deps].filter((d) => !cached.includes(d));
     if (!missing.length) {
       console.log(chalk.green('✅ All dependencies already prebundled.'));
       return;
@@ -133,18 +146,18 @@ export default async function dev() {
     );
   }
 
-  // 🧩 Smart rebuild trigger when package.json changes
+  // 🧩 Prewarm Graph
+  const deps = await analyzeGraph(entry);
+  await prebundleDeps(deps);
+
+  // Auto rebuild on package.json change
   chokidar.watch(pkgFile).on('change', async () => {
-    console.log(chalk.yellow('📦 Detected package.json change — rebuilding prebundles...'));
-    const deps = await analyzeImports(entry);
-    await prebundleDeps(deps);
+    console.log(chalk.yellow('📦 package.json changed — rebuilding prebundle cache...'));
+    const newDeps = await analyzeGraph(entry);
+    await prebundleDeps(newDeps);
   });
 
-  // Initial prewarm
-  const initialDeps = await analyzeImports(entry);
-  await prebundleDeps(initialDeps);
-
-  // --- Serve prebundled / node_modules
+  // --- Serve /@modules/
   app.use('/@modules/', async (req, res, next) => {
     const id = req.url?.replace(/^\/(@modules\/)?/, '');
     if (!id) return next();
@@ -158,7 +171,7 @@ export default async function dev() {
 
       let entryPath: string | null = null;
       try {
-        entryPath = require.resolve(id, { paths: [path.join(appRoot, 'node_modules')] });
+        entryPath = require.resolve(id, { paths: [appRoot] });
       } catch {
         if (id === 'react') entryPath = require.resolve('react');
         else if (id === 'react-dom' || id === 'react-dom/client')
@@ -178,12 +191,19 @@ export default async function dev() {
 
       let code = result.outputFiles[0].text;
 
-      // Fix for react-dom/client exports
+      // 🩹 Fixed react-dom/client shim (no duplicate export)
       if (id === 'react-dom/client') {
         code += `
+          // React Client auto-shim for React 18+
           import * as ReactDOMClient from '/@modules/react-dom';
-          export const createRoot = ReactDOMClient.createRoot || ReactDOMClient.default?.createRoot;
-          export default ReactDOMClient.default || ReactDOMClient;
+          if (!('createRoot' in ReactDOMClient) && ReactDOMClient.default) {
+            Object.assign(ReactDOMClient, ReactDOMClient.default);
+          }
+          export const createRoot =
+            ReactDOMClient.createRoot ||
+            ReactDOMClient.default?.createRoot ||
+            (() => { throw new Error('ReactDOM.createRoot not found'); });
+          export default ReactDOMClient;
         `;
       }
 
@@ -198,12 +218,12 @@ export default async function dev() {
     }
   });
 
-  // --- Serve src files + HMR
+  // --- Serve /src files dynamically
   app.use(async (req, res, next) => {
     if (!req.url || (!req.url.startsWith('/src/') && !req.url.endsWith('.css'))) return next();
+
     const rawPath = decodeURIComponent(req.url.split('?')[0]);
     let filePath = path.join(appRoot, rawPath);
-
     const possibleExts = ['', '.tsx', '.ts', '.jsx', '.js'];
     for (const ext of possibleExts) {
       if (await fs.pathExists(filePath + ext)) {
@@ -216,6 +236,8 @@ export default async function dev() {
 
     try {
       let code = await fs.readFile(filePath, 'utf8');
+
+      // Rewrite bare imports → /@modules/*
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_match, dep) => `from "/@modules/${dep}"`)
         .replace(
@@ -248,7 +270,7 @@ export default async function dev() {
     }
   });
 
-  // --- index.html + overlay
+  // --- Serve index.html + overlay + HMR
   app.use(async (req, res, next) => {
     if (req.url !== '/' && req.url !== '/index.html') return next();
     if (!fs.existsSync(indexHtml)) {
