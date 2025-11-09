@@ -14,7 +14,7 @@ export default async function preview() {
   const config = await loadReactClientConfig(root);
   const appRoot = path.resolve(root, config.root || '.');
   const outDir = path.join(appRoot, config.build?.outDir || '.react-client/build');
-  const defaultPort = config.server?.port || 5173;
+  const defaultPort = config.server?.port || 2202;
 
   if (!fs.existsSync(outDir)) {
     console.error(chalk.red(`❌ Build output not found at: ${outDir}`));

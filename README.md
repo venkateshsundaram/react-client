@@ -59,7 +59,7 @@ import { defineConfig } from 'react-client/config';
 
 export default defineConfig({
   root: './src',
-  server: { port: 5173 },
+  server: { port: 2202 },
   build: { outDir: '.react-client/build' }
 });
 ```
@@ -89,7 +89,7 @@ Each template is pre-configured for esbuild, HMR, and fast bootstrapping.
 - 🔁 **React Fast Refresh (HMR)** — State-preserving reloads  
 - 💥 **Overlay** — Syntax-highlighted stack frames, clickable file links (`vscode://file`)  
 - 🔍 **Source Map Stack Mapping** — Maps runtime errors to original TS/JS source lines  
-- 💬 **Auto Port Detection** — Prompts when default port 5173 is occupied  
+- 💬 **Auto Port Detection** — Prompts when default port 2202 is occupied  
 - 🧠 **Smart Config Loader** — Detects project root, compiles `.ts` configs dynamically  
 - 🎨 **PrismJS Highlighting** — For pretty overlay code frames  
 - 🔌 **Plugin Hook System** — Extendable with `configResolved`, `transform`, `buildEnd`  
@@ -142,7 +142,7 @@ npm install react-refresh
 ### ⚠️ Port already in use
 CLI will auto-detect and prompt:
 ```
-Port 5173 is occupied. Use 5174 instead? (Y/n)
+Port 2202 is occupied. Use 5174 instead? (Y/n)
 ```
 
 ### ⚠️ Permission denied
