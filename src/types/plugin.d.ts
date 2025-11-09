@@ -26,9 +26,28 @@ export interface ReactClientPlugin<T extends BroadcastMessage = HMRMessage> {
   onServerStart?(ctx: DevServerContext<T>): void | Promise<void>;
 }
 
-export interface ReactClientUserConfig<T extends BroadcastMessage = HMRMessage> {
+/**
+ * User configuration for React Client
+ */
+export interface ReactClientUserConfig {
+  /** Root directory of the project (defaults to `.`) */
   root?: string;
-  server?: { port?: number; open?: boolean };
-  build?: { outDir?: string };
-  plugins?: ReactClientPlugin<T>[];
+
+  /** Development server options */
+  server?: {
+    /** Server port (default: 5173) */
+    port?: number;
+
+    /** Automatically open the browser window when the server starts */
+    open?: boolean;
+  };
+
+  /** Build configuration */
+  build?: {
+    /** Output directory for builds */
+    outDir?: string;
+  };
+
+  /** Registered plugins */
+  plugins?: ReactClientPlugin[];
 }
