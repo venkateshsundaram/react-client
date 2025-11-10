@@ -1,16 +1,24 @@
 #!/usr/bin/env node
-import { Command } from 'commander';
-import path from 'path';
+import { dirname, resolve } from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
+import { Command } from 'commander';
+import { fileURLToPath, pathToFileURL } from 'url';
+
 import initCmd from './commands/init';
 import { InitOptions } from './types';
 import devCmd from './commands/dev';
 import buildCmd from './commands/build';
 import previewCmd from './commands/preview';
 
+// Polyfill for __dirname in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 // Load package.json version dynamically
-const pkgPath = path.resolve(__dirname, '../../package.json');
+const pkgPath = resolve(__dirname, '../../package.json');
+const isMainModule = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+
 const pkg = fs.existsSync(pkgPath)
   ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
   : { version: '0.0.0' };
@@ -103,7 +111,7 @@ program.on('command:*', () => {
 // ------------------------------------------------------
 // Entry point
 // ------------------------------------------------------
-if (require.main === module) {
+if (isMainModule) {
   if (process.argv.length <= 2) {
     console.clear();
     showBanner();
