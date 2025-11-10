@@ -1,19 +1,18 @@
+// src/cli/commands/dev.ts
 /**
- * dev.ts — dev server for react-client
+ * dev.ts — Vite-like dev server for react-client
  *
- * - prebundles deps into .react-client/deps
- * - serves /@modules/<dep>
- * - serves /src/* with esbuild transform & inline sourcemap
- * - /@source-map returns a snippet for overlay mapping
- * - HMR broadcast via BroadcastManager (ws)
- *
- * Keep this file linted & typed. Avoids manual react-dom/client hacks.
+ * Features:
+ *  - prebundles deps into .react-client/deps (persistent)
+ *  - serves /@modules/<dep> (prebundled or on-demand esbuild bundle)
+ *  - serves /src/* with esbuild transform + inline sourcemap
+ *  - /@source-map returns a snippet for overlay mapping
+ *  - HMR broadcast via BroadcastManager (ws)
+ *  - plugin system: onTransform, onHotUpdate, onServe, onServerStart
  */
 
 import esbuild from 'esbuild';
-import connect from 'connect';
-import type { NextHandleFunction } from 'connect';
-
+import connect, { type NextHandleFunction } from 'connect';
 import http from 'http';
 import chokidar from 'chokidar';
 import detectPort from 'detect-port';
@@ -23,22 +22,18 @@ import fs from 'fs-extra';
 import open from 'open';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
+import { loadReactClientConfig } from '../../utils/loadConfig';
 import { BroadcastManager } from '../../server/broadcastManager';
-import type { ReactClientPlugin, ReactClientUserConfig } from '../../types/plugin';
-import { createRequire } from 'module';
+import type { BroadcastMessage } from '../../server/broadcastManager';
+import type { DevServerContext } from '../../types/plugin';
 
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
+import type {
+  ReactClientPlugin,
+  ReactClientUserConfig,
+  PluginHotUpdateContext,
+} from '../../types/plugin';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const loadConfigPath = resolve(__dirname, '../../utils/loadConfig.js');
-
-const { loadReactClientConfig } = await import(loadConfigPath);
-
-const require = createRequire(import.meta.url);
-
-type HMRMessage = {
+type HMRMessage = BroadcastMessage & {
   type: 'update' | 'error' | 'reload';
   path?: string;
   message?: string;
@@ -205,37 +200,37 @@ export default async function dev(): Promise<void> {
   const userConfig = (await loadReactClientConfig(root)) as ReactClientUserConfig;
   const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = userConfig.server?.port ?? 2202;
-
-  // cache dir for prebundled deps
   const cacheDir = path.join(appRoot, '.react-client', 'deps');
+
   await fs.ensureDir(cacheDir);
 
   // Detect entry (main.tsx / main.jsx)
-  const possible = ['src/main.tsx', 'src/main.jsx'].map((p) => path.join(appRoot, p));
-  const entry = possible.find((p) => fs.existsSync(p));
+  const possibleEntries = ['src/main.tsx', 'src/main.jsx'].map((p) => path.join(appRoot, p));
+  const entry = possibleEntries.find((p) => fs.existsSync(p));
   if (!entry) {
     console.error(chalk.red('❌ Entry not found: src/main.tsx or src/main.jsx'));
     process.exit(1);
   }
+
   const indexHtml = path.join(appRoot, 'index.html');
 
-  // Select port
+  // Port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
-    const response = await prompts({
+    const res = await prompts({
       type: 'confirm',
       name: 'useNewPort',
       message: `Port ${defaultPort} is occupied. Use ${availablePort} instead?`,
       initial: true,
     });
-    if (!response.useNewPort) {
+    if (!res.useNewPort) {
       console.log('🛑 Dev server cancelled.');
       process.exit(0);
     }
   }
 
-  // Ensure react-refresh runtime available (used by many templates)
+  // ensure react-refresh runtime exists (templates often import it)
   try {
     require.resolve('react-refresh/runtime');
   } catch {
@@ -246,13 +241,11 @@ export default async function dev(): Promise<void> {
         stdio: 'inherit',
       });
     } catch {
-      console.warn(
-        chalk.yellow('⚠️ automatic install of react-refresh failed; continuing without it.'),
-      );
+      console.warn(chalk.yellow('⚠️ auto-install failed — please install react-refresh manually.'));
     }
   }
 
-  // Plugin system (core + user)
+  // Core plugins
   const corePlugins: ReactClientPlugin[] = [
     {
       name: 'css-hmr',
@@ -261,16 +254,17 @@ export default async function dev(): Promise<void> {
           const escaped = JSON.stringify(code);
           return `
             const css = ${escaped};
-            const style = document.createElement("style");
+            const style = document.createElement('style');
             style.textContent = css;
             document.head.appendChild(style);
-            import.meta.hot?.accept();
+            if (import.meta.hot) import.meta.hot.accept();
           `;
         }
         return code;
       },
     },
   ];
+
   const userPlugins = Array.isArray(userConfig.plugins) ? userConfig.plugins : [];
   const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
 
@@ -295,30 +289,31 @@ export default async function dev(): Promise<void> {
           const resolved = require.resolve(dep, { paths: [appRoot] });
           await analyzeGraph(resolved, seen);
         } catch {
-          // bare dependency (node_modules) - track name
+          // bare dependency
           seen.add(dep);
         }
       }
     } catch {
-      // ignore unreadable files
+      // ignore unreadable
     }
     return seen;
   }
 
-  // Prebundle dependencies into cache dir (parallel)
+  // --- Prebundle missing deps (parallel)
   async function prebundleDeps(deps: Set<string>): Promise<void> {
     if (!deps.size) return;
-    const existingFiles = await fs.readdir(cacheDir);
-    const existing = new Set(existingFiles.map((f) => f.replace(/\.js$/, '')));
-    const missing = [...deps].filter((d) => !existing.has(d));
-    if (!missing.length) return;
-
+    const cached = new Set((await fs.readdir(cacheDir)).map((f) => f.replace(/\.js$/, '')));
+    const missing = [...deps].filter((d) => !cached.has(d.replace(/\//g, '_')));
+    if (!missing.length) {
+      console.log(chalk.green('✅ All dependencies prebundled.'));
+      return;
+    }
     console.log(chalk.cyan('📦 Prebundling:'), missing.join(', '));
     await Promise.all(
       missing.map(async (dep) => {
         try {
           const entryPoint = require.resolve(dep, { paths: [appRoot] });
-          const outFile = path.join(cacheDir, normalizeCacheKey(dep) + '.js');
+          const outFile = path.join(cacheDir, dep.replace(/\//g, '_') + '.js');
           await esbuild.build({
             entryPoints: [entryPoint],
             bundle: true,
@@ -336,11 +331,11 @@ export default async function dev(): Promise<void> {
     );
   }
 
-  // Build initial prebundle graph from entry
+  // initial prebundle
   const depsSet = await analyzeGraph(entry);
   await prebundleDeps(depsSet);
 
-  // Watch package.json for changes to re-prebundle
+  // re-prebundle on package.json changes
   const pkgPath = path.join(appRoot, 'package.json');
   if (await fs.pathExists(pkgPath)) {
     chokidar.watch(pkgPath).on('change', async () => {
@@ -474,10 +469,10 @@ const overlayId = "__rc_error_overlay__";
     const url = req.url ?? '';
     if (!url.startsWith('/@source-map')) return next();
     try {
-      const parsed = new URL(req.url ?? '', `http://localhost:${port}`);
+      const full = req.url ?? '';
+      const parsed = new URL(full, `http://localhost:${port}`);
       const file = parsed.searchParams.get('file') ?? '';
-      const lineStr = parsed.searchParams.get('line') ?? '0';
-      const lineNum = Number(lineStr) || 0;
+      const lineNum = Number(parsed.searchParams.get('line') ?? '0') || 0;
       if (!file) {
         res.writeHead(400);
         return res.end('{}');
@@ -508,28 +503,34 @@ const overlayId = "__rc_error_overlay__";
     }
   }) as NextHandleFunction);
 
-  // --- Serve /src/* files (on-the-fly transform + bare import rewrite)
+  // Serve /src/* files (transform on the fly)
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
     if (!url.startsWith('/src/') && !url.endsWith('.css')) return next();
 
     const raw = decodeURIComponent((req.url ?? '').split('?')[0]);
-    const filePath = path.join(appRoot, raw.replace(/^\//, ''));
-    // Try file extensions if not exact file
+    const filePathBase = path.join(appRoot, raw.replace(/^\//, ''));
     const exts = ['', '.tsx', '.ts', '.jsx', '.js', '.css'];
     let found = '';
     for (const ext of exts) {
-      if (await fs.pathExists(filePath + ext)) {
-        found = filePath + ext;
+      if (await fs.pathExists(filePathBase + ext)) {
+        found = filePathBase + ext;
         break;
       }
     }
     if (!found) return next();
 
     try {
+      // serve cached transform if present
+      if (transformCache.has(found)) {
+        res.setHeader('Content-Type', 'application/javascript');
+        res.end(transformCache.get(found)!);
+        return;
+      }
+
       let code = await fs.readFile(found, 'utf8');
 
-      // rewrite bare imports -> /@modules/<dep>
+      // rewrite bare imports to /@modules/*
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
         .replace(
@@ -537,15 +538,16 @@ const overlayId = "__rc_error_overlay__";
           (_m, dep) => `import("/@modules/${dep}")`,
         );
 
-      // run plugin transforms
+      // plugin transforms
       for (const p of plugins) {
         if (p.onTransform) {
+          // eslint-disable-next-line no-await-in-loop
           const out = await p.onTransform(code, found);
           if (typeof out === 'string') code = out;
         }
       }
 
-      // choose loader by extension
+      // choose loader by ext
       const ext = path.extname(found).toLowerCase();
       const loader: esbuild.Loader =
         ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
@@ -566,7 +568,7 @@ const overlayId = "__rc_error_overlay__";
     }
   }) as NextHandleFunction);
 
-  // --- Serve index.html with overlay + HMR client injection
+  // Serve index.html with HMR + overlay injection
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
     if (url !== '/' && url !== '/index.html') return next();
@@ -576,7 +578,8 @@ const overlayId = "__rc_error_overlay__";
     }
     try {
       let html = await fs.readFile(indexHtml, 'utf8');
-      // inject overlay runtime and HMR client if not already present
+
+      // inject runtime overlay and HMR client if not present
       if (!html.includes(RUNTIME_OVERLAY_ROUTE)) {
         html = html.replace(
           '</body>',
@@ -594,6 +597,7 @@ const overlayId = "__rc_error_overlay__";
 </script>\n</body>`,
         );
       }
+
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(html);
     } catch (err) {
@@ -602,31 +606,31 @@ const overlayId = "__rc_error_overlay__";
     }
   }) as NextHandleFunction);
 
-  // --- HMR WebSocket server
+  // HMR WebSocket
   const server = http.createServer(app);
   const broadcaster = new BroadcastManager(server);
 
-  // Watch files and trigger plugin onHotUpdate + broadcast HMR message
+  // Watcher: src
   const watcher = chokidar.watch(path.join(appRoot, 'src'), { ignoreInitial: true });
   watcher.on('change', async (file) => {
     transformCache.delete(file);
-    // plugin hook onHotUpdate optionally
+
+    // plugin hook onHotUpdate
     for (const p of plugins) {
       if (p.onHotUpdate) {
         try {
+          // eslint-disable-next-line no-await-in-loop
           await p.onHotUpdate(file, {
-            // plugin only needs broadcast in most cases
-            broadcast: (msg: HMRMessage) => {
-              broadcaster.broadcast(msg);
-            },
-          } as unknown as { broadcast: (m: HMRMessage) => void });
+            broadcast: (m: HMRMessage) => broadcaster.broadcast(m),
+          } as PluginHotUpdateContext);
         } catch (err) {
+          // plugin errors shouldn't crash server
+          // eslint-disable-next-line no-console
           console.warn('plugin onHotUpdate error:', (err as Error).message);
         }
       }
     }
 
-    // default: broadcast update for changed file
     broadcaster.broadcast({
       type: 'update',
       path: '/' + path.relative(appRoot, file).replace(/\\/g, '/'),
@@ -637,12 +641,33 @@ const overlayId = "__rc_error_overlay__";
   server.listen(port, async () => {
     const url = `http://localhost:${port}`;
     console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
+    console.log(chalk.gray('──────────────────────────────'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
+    // open if not explicitly disabled
     if (userConfig.server?.open !== false) {
       try {
         await open(url);
       } catch {
-        // ignore open errors
+        /* ignore */
+      }
+    }
+
+    const ctx: DevServerContext = {
+      root: appRoot,
+      outDir: cacheDir,
+      app,
+      wss: broadcaster.wss,
+      httpServer: server,
+      broadcast: (m: BroadcastMessage) => broadcaster.broadcast(m),
+    };
+
+    // plugin onServe / onServerStart hooks
+    for (const p of plugins) {
+      if (p.onServe) {
+        await p.onServe(ctx);
+      }
+      if (p.onServerStart) {
+        await p.onServerStart(ctx);
       }
     }
   });
@@ -650,7 +675,7 @@ const overlayId = "__rc_error_overlay__";
   // graceful shutdown
   process.on('SIGINT', async () => {
     console.log(chalk.red('\n🛑 Shutting down...'));
-    await watcher.close();
+    watcher.close();
     broadcaster.close();
     server.close();
     process.exit(0);
