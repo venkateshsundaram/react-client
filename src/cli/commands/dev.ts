@@ -23,10 +23,18 @@ import fs from 'fs-extra';
 import open from 'open';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { loadReactClientConfig } from '../../utils/loadConfig';
 import { BroadcastManager } from '../../server/broadcastManager';
 import type { ReactClientPlugin, ReactClientUserConfig } from '../../types/plugin';
 import { createRequire } from 'module';
+
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const loadConfigPath = resolve(__dirname, '../../utils/loadConfig.js');
+
+const { loadReactClientConfig } = await import(loadConfigPath);
 
 const require = createRequire(import.meta.url);
 
