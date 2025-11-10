@@ -61,18 +61,24 @@ async function resolveModuleEntry(id: string, root: string): Promise<string> {
   const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
   const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
   let pkgJsonPath: string;
+
   try {
     pkgJsonPath = require.resolve(`${pkgRoot}/package.json`, { paths: [root] });
-  } catch (err) {
+  } catch {
+    // No need to keep unused variable 'err'
     throw new Error(`Package not found: ${pkgRoot}`);
   }
 
   const pkgDir = path.dirname(pkgJsonPath);
-  let pkgJson: any = {};
+
+  // Explicitly type pkgJson to avoid 'any'
+  let pkgJson: Record<string, unknown> = {};
+
   try {
-    pkgJson = JSON.parse(await fs.readFile(pkgJsonPath, 'utf8'));
+    const pkgContent = await fs.readFile(pkgJsonPath, 'utf8');
+    pkgJson = JSON.parse(pkgContent) as Record<string, unknown>;
   } catch {
-    // ignore
+    // ignore parse or read errors gracefully
   }
 
   // If exports field exists, try to look up subpath
@@ -90,11 +96,14 @@ async function resolveModuleEntry(id: string, root: string): Promise<string> {
       keyCandidates.push('.', './index.js', './index.mjs');
 
       for (const key of keyCandidates) {
-        const entry = exportsField[key] ?? (exportsField[key] && exportsField[key].import) ?? exportsField[key];
+        const entry =
+          exportsField[key] ?? (exportsField[key] && exportsField[key].import) ?? exportsField[key];
         if (entry) {
           const target = typeof entry === 'string' ? entry : entry.import ?? entry.default ?? null;
           if (target) {
-            const abs = path.isAbsolute(target) ? target : path.resolve(pkgDir, target.replace(/^\.\//, ''));
+            const abs = path.isAbsolute(target)
+              ? target
+              : path.resolve(pkgDir, target.replace(/^\.\//, ''));
             if (await fs.pathExists(abs)) return abs;
           }
         }
@@ -192,7 +201,9 @@ export default async function dev(): Promise<void> {
         stdio: 'inherit',
       });
     } catch {
-      console.warn(chalk.yellow('⚠️ automatic install of react-refresh failed; continuing without it.'));
+      console.warn(
+        chalk.yellow('⚠️ automatic install of react-refresh failed; continuing without it.'),
+      );
     }
   }
 
@@ -340,8 +351,8 @@ export default async function dev(): Promise<void> {
   const OVERLAY_RUNTIME = `
 /* inline overlay runtime - served at ${RUNTIME_OVERLAY_ROUTE} */
 ${(() => {
-    // small helper — embed as a string
-    return `
+  // small helper — embed as a string
+  return `
 const overlayId = "__rc_error_overlay__";
 (function(){ 
   const style = document.createElement("style");
@@ -402,7 +413,7 @@ const overlayId = "__rc_error_overlay__";
   window.addEventListener("unhandledrejection", e => window.showErrorOverlay?.(e.reason || e));
 })();
 `;
-  })()}
+})()}
 `;
 
   app.use(async (req, res, next) => {
@@ -439,7 +450,9 @@ const overlayId = "__rc_error_overlay__";
         .slice(start, end)
         .map((l, i) => {
           const ln = start + i + 1;
-          return `<span class="line-number">${ln}</span> ${l.replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+          return `<span class="line-number">${ln}</span> ${l
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')}`;
         })
         .join('\n');
       res.setHeader('Content-Type', 'application/json');
@@ -474,7 +487,10 @@ const overlayId = "__rc_error_overlay__";
       // rewrite bare imports -> /@modules/<dep>
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`);
+        .replace(
+          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
+          (_m, dep) => `import("/@modules/${dep}")`,
+        );
 
       // run plugin transforms
       for (const p of plugins) {
@@ -486,7 +502,8 @@ const overlayId = "__rc_error_overlay__";
 
       // choose loader by extension
       const ext = path.extname(found).toLowerCase();
-      const loader: esbuild.Loader = ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
+      const loader: esbuild.Loader =
+        ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
 
       const result = await esbuild.transform(code, {
         loader,
