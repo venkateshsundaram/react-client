@@ -11,7 +11,9 @@
  */
 
 import esbuild from 'esbuild';
-import connect, { NextHandleFunction } from 'connect';
+import connect from 'connect';
+import type { NextHandleFunction } from 'connect';
+
 import http from 'http';
 import chokidar from 'chokidar';
 import detectPort from 'detect-port';

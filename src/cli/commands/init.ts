@@ -3,7 +3,7 @@ import fs from 'fs-extra';
 import prompts from 'prompts';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { InitOptions } from '../types.js';
+import type { InitOptions } from '../types.js';
 
 export default async function initCmd(name: string, opts: InitOptions) {
   const root = process.cwd();
