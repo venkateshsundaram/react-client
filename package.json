@@ -1,6 +1,6 @@
 {
   "name": "react-client",
-  "version": "1.0.30",
+  "version": "1.0.31",
   "description": "react-client is a lightweight CLI and runtime for building React apps with fast iteration.",
   "license": "MIT",
   "author": "Venkatesh Sundaram",
