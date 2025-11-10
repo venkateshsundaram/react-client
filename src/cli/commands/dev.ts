@@ -81,31 +81,60 @@ async function resolveModuleEntry(id: string, root: string): Promise<string> {
     // ignore parse or read errors gracefully
   }
 
-  // If exports field exists, try to look up subpath
+  // If exports field exists, try to look up subpath (type-safe, supports conditional exports)
   if (pkgJson.exports) {
-    const exportsField = pkgJson.exports;
-    // normalize exports map to object of keys -> target
+    const exportsField = pkgJson.exports as unknown;
+
+    // If exports is a plain string -> it's the entry
     if (typeof exportsField === 'string') {
       if (!subPath) return path.resolve(pkgDir, exportsField);
-    } else {
-      // try exact ./subpath first, then '.' then fallback
-      const keyCandidates = [];
+    } else if (exportsField && typeof exportsField === 'object') {
+      // Normalize to a record so we can index it safely
+      const exportsMap = exportsField as Record<string, unknown>;
+
+      // Try candidates in order: explicit subpath, index, fallback
+      const keyCandidates: string[] = [];
       if (subPath) {
         keyCandidates.push(`./${subPath}`, `./${subPath}.js`, `./${subPath}.mjs`);
       }
       keyCandidates.push('.', './index.js', './index.mjs');
 
       for (const key of keyCandidates) {
-        const entry =
-          exportsField[key] ?? (exportsField[key] && exportsField[key].import) ?? exportsField[key];
-        if (entry) {
-          const target = typeof entry === 'string' ? entry : entry.import ?? entry.default ?? null;
-          if (target) {
-            const abs = path.isAbsolute(target)
-              ? target
-              : path.resolve(pkgDir, target.replace(/^\.\//, ''));
-            if (await fs.pathExists(abs)) return abs;
+        if (!(key in exportsMap)) continue;
+        const entry = exportsMap[key];
+
+        // entry may be string or object like { import: "...", require: "..." }
+        let target: string | undefined;
+
+        if (typeof entry === 'string') {
+          target = entry;
+        } else if (entry && typeof entry === 'object') {
+          const entryObj = entry as Record<string, unknown>;
+          // Prefer "import" field for ESM consumers, then "default", then any string-ish value
+          if (typeof entryObj.import === 'string') target = entryObj.import;
+          else if (typeof entryObj.default === 'string') target = entryObj.default;
+          else {
+            // If the entry object itself is a conditional map (like {"node": "...", "browser": "..."}),
+            // attempt to pick any string value present.
+            for (const k of Object.keys(entryObj)) {
+              if (typeof entryObj[k] === 'string') {
+                target = entryObj[k] as string;
+                break;
+              }
+            }
           }
+        }
+
+        if (!target || typeof target !== 'string') continue;
+
+        // Normalize relative paths in exports (remove leading ./)
+        const normalized = target.replace(/^\.\//, '');
+        const abs: string = path.isAbsolute(normalized)
+          ? normalized
+          : path.resolve(pkgDir, normalized);
+
+        if (await fs.pathExists(abs)) {
+          return abs;
         }
       }
     }
@@ -131,13 +160,19 @@ async function resolveModuleEntry(id: string, root: string): Promise<string> {
     }
   }
 
-  // Try package's main/module/browser fields
-  const candidateFields = [pkgJson.module, pkgJson.browser, pkgJson.main];
+  // Try package's main/module/browser fields safely (typed as string)
+  const candidateFields: (string | undefined)[] = [
+    typeof pkgJson.module === 'string' ? pkgJson.module : undefined,
+    typeof pkgJson.browser === 'string' ? pkgJson.browser : undefined,
+    typeof pkgJson.main === 'string' ? pkgJson.main : undefined,
+  ];
+
   for (const field of candidateFields) {
-    if (field) {
-      const abs = path.isAbsolute(field) ? field : path.resolve(pkgDir, field);
-      if (await fs.pathExists(abs)) return abs;
-    }
+    if (!field) continue;
+
+    const abs = path.isAbsolute(field) ? field : path.resolve(pkgDir, field);
+
+    if (await fs.pathExists(abs)) return abs;
   }
 
   throw new Error(`Could not resolve module entry for ${id}`);
