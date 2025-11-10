@@ -4,11 +4,11 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "isolatedModules": true,
     "esModuleInterop": true,
+    "isolatedModules": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node", "jest"]   // ✅ This line adds test globals
+    "types": ["node", "jest"]
   },
   "include": ["src", "src/__tests__"]
 }
