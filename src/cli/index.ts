@@ -1,29 +1,32 @@
 #!/usr/bin/env node
-import { dirname, resolve } from 'path';
+/**
+ * React Client CLI (Vite-like)
+ * ---------------------------------------
+ * Supports commands: init, dev, build, preview
+ * ESM-safe, works with NodeNext and global installs.
+ */
+
+import { Command } from 'commander';
+import path from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
-import { Command } from 'commander';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
+import initCmd from './commands/init.js';
+import devCmd from './commands/dev.js';
+import buildCmd from './commands/build.js';
+import previewCmd from './commands/preview.js';
 
-import initCmd from './commands/init';
-import { InitOptions } from './types';
-import devCmd from './commands/dev';
-import buildCmd from './commands/build';
-import previewCmd from './commands/preview';
-
-// Polyfill for __dirname in ESM
+// Resolve __dirname safely in ESM
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
-// Load package.json version dynamically
-const pkgPath = resolve(__dirname, '../../package.json');
-const isMainModule = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
-
+// Dynamically load version from package.json
+const pkgPath = path.resolve(__dirname, '../../package.json');
 const pkg = fs.existsSync(pkgPath)
   ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
   : { version: '0.0.0' };
 
-// 🧠 Fancy startup banner
+// 🧠 Banner Display
 function showBanner(cmd?: string) {
   const title = chalk.bold.cyan('⚡ React Client');
   const version = chalk.gray(`v${pkg.version}`);
@@ -52,55 +55,50 @@ function showBanner(cmd?: string) {
   }
 }
 
-// 🧩 Commander setup
+// CLI Setup
 const program = new Command();
 
 program
   .name('react-client')
-  .description('react-client CLI – A lightweight React toolkit for fast builds & dev server')
+  .description('react-client CLI – lightweight React toolkit for fast builds & dev server')
   .version(pkg.version, '-v, --version', 'display version information');
 
-// ------------------------------------------------------
-// CLI Commands
-// ------------------------------------------------------
-
+// Commands
 program
   .command('init <name>')
   .option('-t, --template <template>', 'choose a template', 'react-ts')
   .option('--with-config', 'create a config file')
   .description('initialize a new React project')
-  .action((name: string, opts: InitOptions) => {
+  .action(async (name: string, opts) => {
     showBanner('init');
-    initCmd(name, opts);
+    await initCmd(name, opts);
   });
 
 program
   .command('dev')
-  .description('start dev server (with React Fast Refresh)')
-  .action(() => {
+  .description('start development server (with React Fast Refresh)')
+  .action(async () => {
     showBanner('dev');
-    devCmd();
+    await devCmd();
   });
 
 program
   .command('build')
   .description('build production assets')
-  .action(() => {
+  .action(async () => {
     showBanner('build');
-    buildCmd();
+    await buildCmd();
   });
 
 program
   .command('preview')
   .description('preview production build')
-  .action(() => {
+  .action(async () => {
     showBanner('preview');
-    previewCmd();
+    await previewCmd();
   });
 
-// ------------------------------------------------------
-// Default / Unknown command handling
-// ------------------------------------------------------
+// Handle unknown commands
 program.on('command:*', () => {
   console.error(chalk.red('❌ Invalid command:'), program.args.join(' '));
   console.log();
@@ -108,10 +106,8 @@ program.on('command:*', () => {
   process.exit(1);
 });
 
-// ------------------------------------------------------
-// Entry point
-// ------------------------------------------------------
-if (isMainModule) {
+// Entry Point (ESM-safe)
+if (import.meta.url === `file://${process.argv[1]}`) {
   if (process.argv.length <= 2) {
     console.clear();
     showBanner();
