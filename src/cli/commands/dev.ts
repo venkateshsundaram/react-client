@@ -1,5 +1,5 @@
 /**
- * dev.ts — Vite-like dev server for react-client
+ * dev.ts — dev server for react-client
  *
  * - prebundles deps into .react-client/deps
  * - serves /@modules/<dep>
@@ -24,6 +24,9 @@ import { execSync } from 'child_process';
 import { loadReactClientConfig } from '../../utils/loadConfig';
 import { BroadcastManager } from '../../server/broadcastManager';
 import type { ReactClientPlugin, ReactClientUserConfig } from '../../types/plugin';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 type HMRMessage = {
   type: 'update' | 'error' | 'reload';
@@ -31,6 +34,117 @@ type HMRMessage = {
   message?: string;
   stack?: string;
 };
+
+const RUNTIME_OVERLAY_ROUTE = '/@runtime/overlay';
+
+function jsContentType() {
+  return 'application/javascript; charset=utf-8';
+}
+
+/**
+ * Resolve any bare import id robustly:
+ * 1. try require.resolve(id)
+ * 2. try require.resolve(`${pkg}/${subpath}`)
+ * 3. try package.json exports field
+ * 4. try common fallback candidates
+ */
+async function resolveModuleEntry(id: string, root: string): Promise<string> {
+  // quick resolution
+  try {
+    return require.resolve(id, { paths: [root] });
+  } catch {
+    // continue
+  }
+
+  // split package root and subpath
+  const parts = id.split('/');
+  const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+  const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
+  let pkgJsonPath: string;
+  try {
+    pkgJsonPath = require.resolve(`${pkgRoot}/package.json`, { paths: [root] });
+  } catch (err) {
+    throw new Error(`Package not found: ${pkgRoot}`);
+  }
+
+  const pkgDir = path.dirname(pkgJsonPath);
+  let pkgJson: any = {};
+  try {
+    pkgJson = JSON.parse(await fs.readFile(pkgJsonPath, 'utf8'));
+  } catch {
+    // ignore
+  }
+
+  // If exports field exists, try to look up subpath
+  if (pkgJson.exports) {
+    const exportsField = pkgJson.exports;
+    // normalize exports map to object of keys -> target
+    if (typeof exportsField === 'string') {
+      if (!subPath) return path.resolve(pkgDir, exportsField);
+    } else {
+      // try exact ./subpath first, then '.' then fallback
+      const keyCandidates = [];
+      if (subPath) {
+        keyCandidates.push(`./${subPath}`, `./${subPath}.js`, `./${subPath}.mjs`);
+      }
+      keyCandidates.push('.', './index.js', './index.mjs');
+
+      for (const key of keyCandidates) {
+        const entry = exportsField[key] ?? (exportsField[key] && exportsField[key].import) ?? exportsField[key];
+        if (entry) {
+          const target = typeof entry === 'string' ? entry : entry.import ?? entry.default ?? null;
+          if (target) {
+            const abs = path.isAbsolute(target) ? target : path.resolve(pkgDir, target.replace(/^\.\//, ''));
+            if (await fs.pathExists(abs)) return abs;
+          }
+        }
+      }
+    }
+  }
+
+  // Try resolved subpath directly (pkg/subpath)
+  if (subPath) {
+    try {
+      const candidate = require.resolve(`${pkgRoot}/${subPath}`, { paths: [root] });
+      return candidate;
+    } catch {
+      // fallback to searching common candidates under package dir
+      const candPaths = [
+        path.join(pkgDir, subPath),
+        path.join(pkgDir, subPath + '.js'),
+        path.join(pkgDir, subPath + '.mjs'),
+        path.join(pkgDir, subPath, 'index.js'),
+        path.join(pkgDir, subPath, 'index.mjs'),
+      ];
+      for (const c of candPaths) {
+        if (await fs.pathExists(c)) return c;
+      }
+    }
+  }
+
+  // Try package's main/module/browser fields
+  const candidateFields = [pkgJson.module, pkgJson.browser, pkgJson.main];
+  for (const field of candidateFields) {
+    if (field) {
+      const abs = path.isAbsolute(field) ? field : path.resolve(pkgDir, field);
+      if (await fs.pathExists(abs)) return abs;
+    }
+  }
+
+  throw new Error(`Could not resolve module entry for ${id}`);
+}
+
+/**
+ * Wrap the built module for subpath imports:
+ * For requests like "/@modules/react-dom/client" — we bundle the resolved file
+ * and return it. If the user requested the package root instead, the resolved
+ * bundle is returned directly.
+ *
+ * No hardcoded special cases.
+ */
+function normalizeCacheKey(id: string) {
+  return id.replace(/[\\/]/g, '_');
+}
 
 export default async function dev(): Promise<void> {
   const root = process.cwd();
@@ -72,10 +186,14 @@ export default async function dev(): Promise<void> {
     require.resolve('react-refresh/runtime');
   } catch {
     console.warn(chalk.yellow('⚠️ react-refresh not found — installing react-refresh...'));
-    execSync('npm install react-refresh --no-audit --no-fund --silent', {
-      cwd: appRoot,
-      stdio: 'inherit',
-    });
+    try {
+      execSync('npm install react-refresh --no-audit --no-fund --silent', {
+        cwd: appRoot,
+        stdio: 'inherit',
+      });
+    } catch {
+      console.warn(chalk.yellow('⚠️ automatic install of react-refresh failed; continuing without it.'));
+    }
   }
 
   // Plugin system (core + user)
@@ -144,7 +262,7 @@ export default async function dev(): Promise<void> {
       missing.map(async (dep) => {
         try {
           const entryPoint = require.resolve(dep, { paths: [appRoot] });
-          const outFile = path.join(cacheDir, dep.replace(/\//g, '_') + '.js');
+          const outFile = path.join(cacheDir, normalizeCacheKey(dep) + '.js');
           await esbuild.build({
             entryPoints: [entryPoint],
             bundle: true,
@@ -177,7 +295,7 @@ export default async function dev(): Promise<void> {
   }
 
   // --- Serve /@modules/<dep> (prebundled or on-demand esbuild bundle)
-  app.use(async (req, res, next) => {
+  app.use((async (req, res, next) => {
     const url = req.url ?? '';
     if (!url.startsWith('/@modules/')) return next();
 
@@ -188,44 +306,14 @@ export default async function dev(): Promise<void> {
     }
 
     try {
-      const cacheFile = path.join(cacheDir, id.replace(/[\\/]/g, '_') + '.js');
+      const cacheFile = path.join(cacheDir, normalizeCacheKey(id) + '.js');
       if (await fs.pathExists(cacheFile)) {
-        res.setHeader('Content-Type', 'application/javascript');
+        res.setHeader('Content-Type', jsContentType());
         return res.end(await fs.readFile(cacheFile, 'utf8'));
       }
 
-      // 🧠 Handle subpath imports correctly (like react-dom/client)
-      let entryFile: string | null = null;
-
-      try {
-        entryFile = require.resolve(id, { paths: [appRoot] });
-      } catch {
-        const parts = id.split('/');
-        const pkgRoot = parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-        const subPath = parts.slice(pkgRoot.startsWith('@') ? 2 : 1).join('/');
-        const pkgJsonPath = require.resolve(`${pkgRoot}/package.json`, { paths: [appRoot] });
-        const pkgDir = path.dirname(pkgJsonPath);
-
-        // Special case: react-dom/client
-        if (pkgRoot === 'react-dom' && subPath === 'client') {
-          entryFile = path.join(pkgDir, 'client.js');
-        } else {
-          const candidates = [
-            path.join(pkgDir, subPath),
-            path.join(pkgDir, subPath, 'index.js'),
-            path.join(pkgDir, subPath + '.js'),
-            path.join(pkgDir, subPath + '.mjs'),
-          ];
-          for (const f of candidates) {
-            if (await fs.pathExists(f)) {
-              entryFile = f;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!entryFile) throw new Error(`Cannot resolve module: ${id}`);
+      // Resolve the actual entry file (handles subpaths & package exports)
+      const entryFile = await resolveModuleEntry(id, appRoot);
 
       const result = await esbuild.build({
         entryPoints: [entryFile],
@@ -237,110 +325,89 @@ export default async function dev(): Promise<void> {
       });
 
       const output = result.outputFiles?.[0]?.text ?? '';
-      await fs.writeFile(cacheFile, output, 'utf8');
 
-      res.setHeader('Content-Type', 'application/javascript');
+      // Write cache and respond
+      await fs.writeFile(cacheFile, output, 'utf8');
+      res.setHeader('Content-Type', jsContentType());
       res.end(output);
     } catch (err) {
       res.writeHead(500);
       res.end(`// Failed to resolve module ${id}: ${(err as Error).message}`);
     }
-  });
+  }) as NextHandleFunction);
 
   // --- Serve runtime overlay (inline, no external dependencies)
   const OVERLAY_RUNTIME = `
+/* inline overlay runtime - served at ${RUNTIME_OVERLAY_ROUTE} */
+${(() => {
+    // small helper — embed as a string
+    return `
 const overlayId = "__rc_error_overlay__";
+(function(){ 
+  const style = document.createElement("style");
+  style.textContent = \`
+    #\${overlayId}{position:fixed;inset:0;background:rgba(0,0,0,0.9);color:#fff;font-family:Menlo,Consolas,monospace;font-size:14px;z-index:999999;overflow:auto;padding:24px;}
+    #\${overlayId} h2{color:#ff6b6b;margin-bottom:16px;}
+    #\${overlayId} pre{background:rgba(255,255,255,0.06);padding:12px;border-radius:6px;overflow:auto;}
+    .frame-file{color:#ffa500;cursor:pointer;font-weight:bold;margin-bottom:4px;}
+    .line-number{opacity:0.6;margin-right:10px;display:inline-block;width:2em;text-align:right;}
+  \`;
+  document.head.appendChild(style);
 
-const style = document.createElement("style");
-style.textContent = \`
-  #\${overlayId} {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.9);
-    color: #fff;
-    font-family: Menlo, Consolas, monospace;
-    font-size: 14px;
-    z-index: 999999;
-    overflow: auto;
-    padding: 24px;
-    animation: fadeIn 0.2s ease-out;
+  async function mapStackFrame(frame){
+    const m = frame.match(/(\\/src\\/[^\s:]+):(\\d+):(\\d+)/);
+    if(!m) return frame;
+    const [,file,line,col] = m;
+    try{
+      const resp = await fetch(\`/@source-map?file=\${file}&line=\${line}&column=\${col}\`);
+      if(!resp.ok) return frame;
+      const pos = await resp.json();
+      if(pos.source) return pos;
+    }catch(e){}
+    return frame;
   }
-  @keyframes fadeIn { from {opacity: 0;} to {opacity: 1;} }
-  #\${overlayId} h2 { color: #ff6b6b; margin-bottom: 16px; }
-  #\${overlayId} pre { background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px; overflow-x: auto; }
-  #\${overlayId} a { color: #9cf; text-decoration: underline; }
-  #\${overlayId} .frame { margin: 12px 0; }
-  #\${overlayId} .frame-file { color: #ffa500; cursor: pointer; font-weight: bold; margin-bottom: 4px; }
-  .line-number { opacity: 0.5; margin-right: 10px; display: inline-block; width: 2em; text-align: right; }
-\`;
-document.head.appendChild(style);
 
-async function mapStackFrame(frame) {
-  const m = frame.match(/(\\/src\\/[^\s:]+):(\\d+):(\\d+)/);
-  if (!m) return frame;
-  const [, file, line, col] = m;
-  const resp = await fetch(\`/@source-map?file=\${file}&line=\${line}&column=\${col}\`);
-  if (!resp.ok) return frame;
-  const pos = await resp.json();
-  if (pos.source) {
-    return {
-      file: pos.source,
-      line: pos.line,
-      column: pos.column,
-      snippet: pos.snippet || ""
-    };
+  function highlightSimple(s){
+    return s.replace(/(const|let|var|function|return|import|from|export|class|new|await|async|if|else|for|while|try|catch|throw)/g,'<span style="color:#ffb86c">$1</span>');
   }
-  return frame;
-}
 
-// 🔹 minimal inline syntax highlighting (keywords only)
-function highlightJS(code) {
-  return code
-    .replace(/(const|let|var|function|return|import|from|export|class|new|await|async|if|else|for|while|try|catch|throw)/g, '<span style="color:#ffb86c;">$1</span>')
-    .replace(/("[^"]*"|'[^']*')/g, '<span style="color:#8be9fd;">$1</span>')
-    .replace(/(\\/\\/.*)/g, '<span style="opacity:0.6;">$1</span>');
-}
-
-async function renderOverlay(err) {
-  const overlay =
-    document.getElementById(overlayId) ||
-    document.body.appendChild(Object.assign(document.createElement("div"), { id: overlayId }));
-  overlay.innerHTML = "";
-  const title = document.createElement("h2");
-  title.textContent = "🔥 " + (err.message || "Error");
-  overlay.appendChild(title);
-
-  const frames = (err.stack || "").split("\\n").filter(l => /src\\//.test(l));
-  for (const frame of frames) {
-    const mapped = await mapStackFrame(frame);
-    if (typeof mapped === "string") continue;
-    const frameEl = document.createElement("div");
-    frameEl.className = "frame";
-
-    const link = document.createElement("div");
-    link.className = "frame-file";
-    link.textContent = \`\${mapped.file}:\${mapped.line}:\${mapped.column}\`;
-    link.onclick = () =>
-      window.open("vscode://file/" + location.origin.replace("http://", "") + mapped.file + ":" + mapped.line);
-    frameEl.appendChild(link);
-
-    if (mapped.snippet) {
-      const pre = document.createElement("pre");
-      pre.innerHTML = highlightJS(mapped.snippet);
-      frameEl.appendChild(pre);
+  async function renderOverlay(err){
+    const overlay = document.getElementById(overlayId) || document.body.appendChild(Object.assign(document.createElement("div"),{id:overlayId}));
+    overlay.innerHTML = "";
+    const title = document.createElement("h2");
+    title.textContent = "🔥 " + (err.message || "Error");
+    overlay.appendChild(title);
+    const frames = (err.stack||"").split("\\n").filter(l => /src\\//.test(l));
+    for(const frame of frames){
+      const mapped = await mapStackFrame(frame);
+      if(typeof mapped === "string") continue;
+      const frameEl = document.createElement("div");
+      const link = document.createElement("div");
+      link.className = "frame-file";
+      link.textContent = \`\${mapped.source||mapped.file}:\${mapped.line}:\${mapped.column}\`;
+      link.onclick = ()=>window.open("vscode://file/"+(mapped.source||mapped.file)+":"+mapped.line);
+      frameEl.appendChild(link);
+      if(mapped.snippet){
+        const pre = document.createElement("pre");
+        pre.innerHTML = highlightSimple(mapped.snippet);
+        frameEl.appendChild(pre);
+      }
+      overlay.appendChild(frameEl);
     }
-
-    overlay.appendChild(frameEl);
   }
-}
 
-window.showErrorOverlay = (err) => renderOverlay(err);
-window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
+  window.showErrorOverlay = (err)=>renderOverlay(err);
+  window.clearErrorOverlay = ()=>document.getElementById(overlayId)?.remove();
+  window.addEventListener("error", e => window.showErrorOverlay?.(e.error || e));
+  window.addEventListener("unhandledrejection", e => window.showErrorOverlay?.(e.reason || e));
+})();
+`;
+  })()}
 `;
 
   app.use(async (req, res, next) => {
-    if (req.url === '/@runtime/overlay') {
-      res.setHeader('Content-Type', 'application/javascript');
+    if (req.url === RUNTIME_OVERLAY_ROUTE) {
+      res.setHeader('Content-Type', jsContentType());
       return res.end(OVERLAY_RUNTIME);
     }
     next();
@@ -350,10 +417,8 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
     if (!url.startsWith('/@source-map')) return next();
-    // expected query: ?file=/src/xyz.tsx&line=12&column=3
     try {
-      const full = req.url ?? '';
-      const parsed = new URL(full, `http://localhost:${port}`);
+      const parsed = new URL(req.url ?? '', `http://localhost:${port}`);
       const file = parsed.searchParams.get('file') ?? '';
       const lineStr = parsed.searchParams.get('line') ?? '0';
       const lineNum = Number(lineStr) || 0;
@@ -374,9 +439,7 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
         .slice(start, end)
         .map((l, i) => {
           const ln = start + i + 1;
-          return `<span class="line-number">${ln}</span> ${l
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')}`;
+          return `<span class="line-number">${ln}</span> ${l.replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
         })
         .join('\n');
       res.setHeader('Content-Type', 'application/json');
@@ -411,17 +474,11 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
       // rewrite bare imports -> /@modules/<dep>
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(
-          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
-          (_m, dep) => `import("/@modules/${dep}")`,
-        );
+        .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`);
 
       // run plugin transforms
       for (const p of plugins) {
         if (p.onTransform) {
-          // plugin may return transformed code
-          // keep typed as string
-          // eslint-disable-next-line no-await-in-loop
           const out = await p.onTransform(code, found);
           if (typeof out === 'string') code = out;
         }
@@ -429,8 +486,7 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
 
       // choose loader by extension
       const ext = path.extname(found).toLowerCase();
-      const loader: esbuild.Loader =
-        ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
+      const loader: esbuild.Loader = ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
 
       const result = await esbuild.transform(code, {
         loader,
@@ -439,7 +495,7 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
       });
 
       transformCache.set(found, result.code);
-      res.setHeader('Content-Type', 'application/javascript');
+      res.setHeader('Content-Type', jsContentType());
       res.end(result.code);
     } catch (err) {
       const e = err as Error;
@@ -459,10 +515,10 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
     try {
       let html = await fs.readFile(indexHtml, 'utf8');
       // inject overlay runtime and HMR client if not already present
-      if (!html.includes('/@runtime/overlay')) {
+      if (!html.includes(RUNTIME_OVERLAY_ROUTE)) {
         html = html.replace(
           '</body>',
-          `\n<script type="module" src="/@runtime/overlay"></script>\n<script type="module">
+          `\n<script type="module" src="${RUNTIME_OVERLAY_ROUTE}"></script>\n<script type="module">
   const ws = new WebSocket("ws://" + location.host);
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
@@ -476,7 +532,7 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
 </script>\n</body>`,
         );
       }
-      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(html);
     } catch (err) {
       res.writeHead(500);
@@ -496,18 +552,13 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
     for (const p of plugins) {
       if (p.onHotUpdate) {
         try {
-          // allow plugin to broadcast via a simple function
-          // plugin gets { broadcast }
-          // plugin signature: onHotUpdate(file, { broadcast })
-          // eslint-disable-next-line no-await-in-loop
           await p.onHotUpdate(file, {
+            // plugin only needs broadcast in most cases
             broadcast: (msg: HMRMessage) => {
               broadcaster.broadcast(msg);
             },
           } as unknown as { broadcast: (m: HMRMessage) => void });
         } catch (err) {
-          // plugin errors shouldn't crash server
-          // eslint-disable-next-line no-console
           console.warn('plugin onHotUpdate error:', (err as Error).message);
         }
       }
@@ -526,7 +577,6 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
     console.log(chalk.cyan.bold('\n🚀 React Client Dev Server'));
     console.log(chalk.green(`⚡ Running at: ${url}`));
     if (userConfig.server?.open !== false) {
-      // open default browser
       try {
         await open(url);
       } catch {
@@ -538,7 +588,7 @@ window.clearErrorOverlay = () => document.getElementById(overlayId)?.remove();
   // graceful shutdown
   process.on('SIGINT', async () => {
     console.log(chalk.red('\n🛑 Shutting down...'));
-    watcher.close();
+    await watcher.close();
     broadcaster.close();
     server.close();
     process.exit(0);
