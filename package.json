@@ -38,7 +38,7 @@
   },
   "sideEffects": false,
   "files": [
-    "dist",
+    "dist/**/*",
     "templates"
   ],
   "workspaces": [
