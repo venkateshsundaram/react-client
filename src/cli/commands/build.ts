@@ -2,7 +2,7 @@ import esbuild from 'esbuild';
 import path from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
-import { loadReactClientConfig } from '../../utils/loadConfig';
+import { loadReactClientConfig } from '../../utils/loadConfig.js';
 
 export default async function build() {
   const root = process.cwd();
