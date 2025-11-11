@@ -1,9 +1,15 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": false,
     "rootDir": "src",
-    "noEmitOnError": true
+    "outDir": "dist",
+    "noEmitOnError": true,
+    "skipLibCheck": true
   },
   "include": [
     "src/cli/**/*",
@@ -11,6 +17,5 @@
     "src/utils/**/*",
     "src/types/**/*",
     "src/config.ts"
-  ],
-  "exclude": ["node_modules", "dist", "templates", "src/__tests__"]
+  ]
 }

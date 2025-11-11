@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import detectPort from 'detect-port';
 import prompts from 'prompts';
 import open from 'open';
-import { loadReactClientConfig } from '../../utils/loadConfig';
+import { loadReactClientConfig } from '../../utils/loadConfig.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

@@ -22,8 +22,8 @@ import fs from 'fs-extra';
 import open from 'open';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { loadReactClientConfig } from '../../utils/loadConfig';
-import { BroadcastManager } from '../../server/broadcastManager';
+import { loadReactClientConfig } from '../../utils/loadConfig.js';
+import { BroadcastManager } from '../../server/broadcastManager.js';
 import type { BroadcastMessage } from '../../server/broadcastManager';
 import type { DevServerContext } from '../../types/plugin';
 
