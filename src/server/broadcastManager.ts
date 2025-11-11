@@ -1,17 +1,22 @@
-// src/server/broadcastManager.ts
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, WebSocket as NodeWebSocket } from 'ws';
 import http from 'http';
 import chalk from 'chalk';
 
 /**
- * Generic broadcast message type used across dev runtime and plugins.
- * The index signature allows plugins to attach arbitrary keys.
+ * Base broadcast message that plugins may extend.
+ * Includes an index signature so plugin-defined keys are allowed.
  */
-export type BroadcastMessage = {
+export interface BroadcastMessage {
+  /** At minimum every message must have a type string */
   type: string;
   [key: string]: unknown;
-};
+}
 
+/**
+ * Core HMR message shape — narrows `type` to known HMR events
+ * and adds optional fields. It extends BroadcastMessage so it's
+ * assignable to the generic constraint.
+ */
 export interface HMRMessage extends BroadcastMessage {
   type: 'update' | 'error' | 'reload';
   path?: string;
@@ -20,72 +25,56 @@ export interface HMRMessage extends BroadcastMessage {
 }
 
 /**
- * BroadcastManager — shared WebSocket utility for dev/preview/ssr servers.
- * Uses `ws` WebSocket instances (Node) — not DOM WebSocket.
+ * BroadcastManager — Shared WebSocket utility for dev, preview, and SSR servers.
+ * Generic over message type T which defaults to HMRMessage.
  */
-export class BroadcastManager {
-  public wss: WebSocketServer;
-  private clients: Set<WebSocket> = new Set();
+export class BroadcastManager<T extends BroadcastMessage = HMRMessage> {
+  private wss: WebSocketServer;
+  private clients: Set<NodeWebSocket> = new Set();
 
   constructor(server: http.Server) {
     this.wss = new WebSocketServer({ server });
 
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on('connection', (ws: NodeWebSocket) => {
       this.clients.add(ws);
-      console.log(chalk.gray('🔌 HMR client connected'));
 
       ws.on('close', () => {
         this.clients.delete(ws);
-        console.log(chalk.gray('❎ HMR client disconnected'));
       });
 
       ws.on('error', (err) => {
-        console.error(chalk.red('⚠️ WebSocket error:'), err?.message ?? err);
+        console.error(chalk.red('⚠️ WebSocket error:'), err.message);
       });
     });
   }
 
-  /**
-   * Broadcast a message to all connected clients.
-   */
-  broadcast(msg: BroadcastMessage): void {
+  broadcast(msg: T): void {
     const data = JSON.stringify(msg);
     for (const client of this.clients) {
-      // ws.OPEN === 1
-      if (client.readyState === WebSocket.OPEN) {
-        try {
-          client.send(data);
-        } catch {
-          // ignore send errors per-client
-        }
+      if (client.readyState === NodeWebSocket.OPEN) {
+        client.send(data);
       }
     }
   }
 
-  /**
-   * Send a message to a single client (ws instance from 'ws').
-   */
-  send(ws: WebSocket, msg: BroadcastMessage): void {
-    if (ws.readyState === WebSocket.OPEN) {
+  send(ws: NodeWebSocket, msg: T): void {
+    if (ws.readyState === NodeWebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
   }
 
-  /**
-   * Close all WebSocket connections and server.
-   */
+  getClientCount(): number {
+    return this.clients.size;
+  }
+
   close(): void {
-    try {
-      console.log(chalk.red('🛑 Closing WebSocket connections...'));
-      this.wss.close();
-    } catch {
-      /* ignore */
-    }
+    console.log(chalk.red('🛑 Closing WebSocket connections...'));
+    this.wss.close();
     for (const ws of this.clients) {
       try {
         ws.close();
       } catch {
-        // ignore per-client close errors
+        // ignore
       }
     }
     this.clients.clear();
