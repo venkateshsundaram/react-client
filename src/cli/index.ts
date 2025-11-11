@@ -1,42 +1,37 @@
 #!/usr/bin/env node
-/**
- * React Client CLI (Vite-like)
- * ---------------------------------------
- * Supports commands: init, dev, build, preview
- * ESM-safe, works with NodeNext and global installs.
- */
-
-import { Command } from 'commander';
-import path from 'path';
+import { dirname, resolve } from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
-import { fileURLToPath } from 'url';
+import { Command } from 'commander';
+import { fileURLToPath, pathToFileURL } from 'url';
+
 import initCmd from './commands/init.js';
+import type { InitOptions } from './types';
 import devCmd from './commands/dev.js';
 import buildCmd from './commands/build.js';
 import previewCmd from './commands/preview.js';
 
-// Resolve __dirname safely in ESM
+// Polyfill for __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = dirname(__filename);
 
-// Dynamically load version from package.json
-const pkgPath = path.resolve(__dirname, '../../package.json');
+// Load package.json version dynamically
+const pkgPath = resolve(__dirname, '../../package.json');
+const isMainModule = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+
 const pkg = fs.existsSync(pkgPath)
   ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
   : { version: '0.0.0' };
 
-// 🧠 Banner Display
+// 🧠 Fancy startup banner
 function showBanner(cmd?: string) {
   const title = chalk.bold.cyan('⚡ React Client');
   const version = chalk.gray(`v${pkg.version}`);
   const tagline = chalk.dim('Fast esbuild-based React CLI with HMR & Overlay');
   const line = chalk.gray('──────────────────────────────────────────────────────────────');
-
   console.log(`\n${title} ${version}`);
   console.log(tagline);
   console.log(line);
-
   switch (cmd) {
     case 'init':
       console.log(chalk.cyan('📦 Initializing new React project...\n'));
@@ -55,50 +50,55 @@ function showBanner(cmd?: string) {
   }
 }
 
-// CLI Setup
+// 🧩 Commander setup
 const program = new Command();
 
 program
   .name('react-client')
-  .description('react-client CLI – lightweight React toolkit for fast builds & dev server')
+  .description('react-client CLI – A lightweight React toolkit for fast builds & dev server')
   .version(pkg.version, '-v, --version', 'display version information');
 
-// Commands
+// ------------------------------------------------------
+// CLI Commands
+// ------------------------------------------------------
+
 program
   .command('init <name>')
   .option('-t, --template <template>', 'choose a template', 'react-ts')
   .option('--with-config', 'create a config file')
   .description('initialize a new React project')
-  .action(async (name: string, opts) => {
+  .action((name: string, opts: InitOptions) => {
     showBanner('init');
-    await initCmd(name, opts);
+    initCmd(name, opts);
   });
 
 program
   .command('dev')
-  .description('start development server (with React Fast Refresh)')
-  .action(async () => {
+  .description('start dev server (with React Fast Refresh)')
+  .action(() => {
     showBanner('dev');
-    await devCmd();
+    devCmd();
   });
 
 program
   .command('build')
   .description('build production assets')
-  .action(async () => {
+  .action(() => {
     showBanner('build');
-    await buildCmd();
+    buildCmd();
   });
 
 program
   .command('preview')
   .description('preview production build')
-  .action(async () => {
+  .action(() => {
     showBanner('preview');
-    await previewCmd();
+    previewCmd();
   });
 
-// Handle unknown commands
+// ------------------------------------------------------
+// Default / Unknown command handling
+// ------------------------------------------------------
 program.on('command:*', () => {
   console.error(chalk.red('❌ Invalid command:'), program.args.join(' '));
   console.log();
@@ -106,8 +106,10 @@ program.on('command:*', () => {
   process.exit(1);
 });
 
-// Entry Point (ESM-safe)
-if (import.meta.url === `file://${process.argv[1]}`) {
+// ------------------------------------------------------
+// Entry point
+// ------------------------------------------------------
+if (isMainModule) {
   if (process.argv.length <= 2) {
     console.clear();
     showBanner();
@@ -116,5 +118,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     program.parse(process.argv);
   }
 }
-
 export default program;
