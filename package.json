@@ -61,8 +61,8 @@
   ],
   "scripts": {
     "clean": "rm -rf dist .turbo .react-client.temp.config*",
-    "compile": "npm run clean && tsc -p tsconfig.build.json",
-    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/fix-extensions.mjs",
+    "compile": "tsc -p tsconfig.build.json",
+    "build": "npm run clean && npm run compile && node scripts/fix-extensions.mjs",
     "build:cli": "node dist/cli/index.js build",
     "dev": "node dist/cli/index.js dev",
     "prepare": "npm run compile",
