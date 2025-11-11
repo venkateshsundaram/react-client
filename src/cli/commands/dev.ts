@@ -354,7 +354,7 @@ export default async function dev(): Promise<void> {
       const inlineRuntime = `
 /* Inline overlay fallback (auto-generated) */
 ${(() => {
-        return `
+  return `
 const overlayId = "__rc_error_overlay__";
 (function(){
   const style = document.createElement('style');
@@ -404,7 +404,7 @@ const overlayId = "__rc_error_overlay__";
   window.addEventListener("unhandledrejection", e=>window.showErrorOverlay?.(e.reason||e));
 })();
 `;
-      })()}
+})()}
 `;
       res.setHeader('Content-Type', jsContentType());
       return res.end(inlineRuntime);
@@ -439,7 +439,9 @@ const overlayId = "__rc_error_overlay__";
         .slice(start, end)
         .map((l, i) => {
           const ln = start + i + 1;
-          return `<span class="line-number">${ln}</span> ${l.replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+          return `<span class="line-number">${ln}</span> ${l
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')}`;
         })
         .join('\n');
       res.setHeader('Content-Type', 'application/json');
@@ -480,7 +482,10 @@ const overlayId = "__rc_error_overlay__";
       // rewrite bare imports to /@modules/*
       code = code
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`);
+        .replace(
+          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
+          (_m, dep) => `import("/@modules/${dep}")`,
+        );
 
       // plugin transforms
       for (const p of plugins) {
@@ -494,7 +499,8 @@ const overlayId = "__rc_error_overlay__";
 
       // loader
       const ext = path.extname(found).toLowerCase();
-      const loader: esbuild.Loader = ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
+      const loader: esbuild.Loader =
+        ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
 
       const result = await esbuild.transform(code, {
         loader,
@@ -591,7 +597,8 @@ const overlayId = "__rc_error_overlay__";
     console.log(chalk.green(`⚡ Running at: ${url}`));
 
     // open if not explicitly disabled. using safe cast to allow unknown shape of userConfig.server
-    const shouldOpen = ((userConfig as unknown) as { server?: { open?: boolean } }).server?.open !== false;
+    const shouldOpen =
+      (userConfig as unknown as { server?: { open?: boolean } }).server?.open !== false;
     if (shouldOpen) {
       try {
         await open(url);
