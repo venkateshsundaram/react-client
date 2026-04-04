@@ -17,7 +17,6 @@ import type { NextHandleFunction } from 'connect';
 import http from 'http';
 import chokidar from 'chokidar';
 import detectPort from 'detect-port';
-import prompts from 'prompts';
 import path from 'path';
 import fs from 'fs-extra';
 import open from 'open';
@@ -28,13 +27,12 @@ import type { ReactClientPlugin, ReactClientUserConfig } from '../../types/plugi
 import { createRequire } from 'module';
 
 import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
+import { dirname } from 'path';
+
+import { loadReactClientConfig } from '../../utils/loadConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const loadConfigPath = resolve(__dirname, '../../utils/loadConfig.js');
-
-const { loadReactClientConfig } = await import(loadConfigPath);
 
 const require = createRequire(import.meta.url);
 
@@ -44,7 +42,6 @@ type HMRMessage = {
   message?: string;
   stack?: string;
 };
-const RUNTIME_OVERLAY_ROUTE = '/@runtime/overlay';
 function jsContentType() {
   return 'application/javascript; charset=utf-8';
 }
@@ -179,35 +176,42 @@ export default async function dev(): Promise<void> {
   const root = process.cwd();
   const userConfig = (await loadReactClientConfig(root)) as ReactClientUserConfig;
   const appRoot = path.resolve(root, userConfig.root || '.');
-  const defaultPort = userConfig.server?.port ?? 2202;
+  const defaultPort = Number(process.env.PORT) || userConfig.server?.port || 2202;
 
   // cache dir for prebundled deps
   const cacheDir = path.join(appRoot, '.react-client', 'deps');
   await fs.ensureDir(cacheDir);
 
   // Detect entry (main.tsx / main.jsx)
-  const possible = ['src/main.tsx', 'src/main.jsx'].map((p) => path.join(appRoot, p));
-  const entry = possible.find((p) => fs.existsSync(p));
+  const paths = [
+    path.join(appRoot, 'src/main.tsx'),
+    path.join(appRoot, 'src/main.jsx'),
+    path.join(appRoot, 'main.tsx'),
+    path.join(appRoot, 'main.jsx'),
+  ];
+  const entry = paths.find((p) => fs.existsSync(p));
   if (!entry) {
-    console.error(chalk.red('❌ Entry not found: src/main.tsx or src/main.jsx'));
+    console.error(chalk.red('❌ Entry not found: main.tsx or main.jsx in app root or src/'));
     process.exit(1);
   }
-  const indexHtml = path.join(appRoot, 'index.html');
+  // Detect index.html and public dir
+  let publicDir = path.join(appRoot, 'public');
+  if (!fs.existsSync(publicDir)) {
+    publicDir = path.join(root, 'public');
+    if (!fs.existsSync(publicDir)) {
+      // Create empty if missing, but usually templates provide it
+      await fs.ensureDir(publicDir);
+    }
+  }
+  const indexHtml = path.join(publicDir, 'index.html');
 
   // Select port
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
-    const response = await prompts({
-      type: 'confirm',
-      name: 'useNewPort',
-      message: `Port ${defaultPort} is occupied. Use ${availablePort} instead?`,
-      initial: true,
-    });
-    if (!response.useNewPort) {
-      console.log('🛑 Dev server cancelled.');
-      process.exit(0);
-    }
+    console.log(
+      chalk.yellow(`\n⚠️ Port ${defaultPort} is occupied. Using ${availablePort} instead.`),
+    );
   }
 
   // Ensure react-refresh runtime available (used by many templates)
@@ -245,6 +249,39 @@ export default async function dev(): Promise<void> {
         return code;
       },
     },
+    {
+      name: 'react-refresh',
+      async onTransform(code, id) {
+        if (id.match(/\.[tj]sx$/)) {
+          // In ESM, we can't easily put statements before imports.
+          // We'll rely on the global hook injected in index.html.
+          const relativePath = '/' + path.relative(appRoot, id);
+          const hmrBoilerplate = `
+            if (window.__REFRESH_RUNTIME__ && window.__GET_HOT_CONTEXT__) {
+              const ___hot = window.__GET_HOT_CONTEXT__(${JSON.stringify(relativePath)});
+              if (___hot) {
+                window.$RefreshReg$ = (type, id) => {
+                  window.__REFRESH_RUNTIME__.register(type, ${JSON.stringify(
+                    relativePath,
+                  )} + " " + id);
+                };
+                window.$RefreshSig$ = () => window.__REFRESH_RUNTIME__.createSignatureFunctionForTransform();
+              }
+            }
+          `;
+          const modBoilerplate = `
+            if (window.__RC_HMR_STATE__) {
+              const ___mod = window.__RC_HMR_STATE__.modules[${JSON.stringify(relativePath)}];
+              if (___mod && ___mod.cb) {
+                if (typeof ___mod.cb === 'function') ___mod.cb();
+              }
+            }
+          `;
+          return `${code}\n${hmrBoilerplate}\n${modBoilerplate}`;
+        }
+        return code;
+      },
+    },
   ];
   const userPlugins = Array.isArray(userConfig.plugins) ? userConfig.plugins : [];
   const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
@@ -253,65 +290,206 @@ export default async function dev(): Promise<void> {
   const app = connect();
   const transformCache = new Map<string, string>();
   // Helper: recursively analyze dependency graph for prebundling (bare imports)
-  async function analyzeGraph(file: string, seen = new Set<string>()): Promise<Set<string>> {
-    if (seen.has(file)) return seen;
-    seen.add(file);
-    try {
-      const code = await fs.readFile(file, 'utf8');
-      const matches = [
-        ...code.matchAll(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g),
-        ...code.matchAll(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g),
-      ];
-      for (const m of matches) {
-        const dep = m[1];
-        if (!dep || dep.startsWith('.') || dep.startsWith('/')) continue;
-        try {
-          const resolved = require.resolve(dep, { paths: [appRoot] });
-          await analyzeGraph(resolved, seen);
-        } catch {
-          // bare dependency (node_modules) - track name
-          seen.add(dep);
+  // --- Dependency Analysis & Prebundling ---
+  async function analyzeGraph(file: string, _seen = new Set<string>()): Promise<Set<string>> {
+    const deps = new Set<string>();
+    const visitedFiles = new Set<string>();
+
+    async function walk(f: string) {
+      if (visitedFiles.has(f)) return;
+      visitedFiles.add(f);
+
+      try {
+        const code = await fs.readFile(f, 'utf8');
+        const matches = [
+          ...code.matchAll(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g),
+          ...code.matchAll(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g),
+          ...code.matchAll(/\brequire\(['"]([^'".\/][^'"]*)['"]\)/g),
+        ];
+
+        for (const m of matches) {
+          const dep = m[1];
+          if (!dep || dep.startsWith('.') || dep.startsWith('/')) continue;
+          if (!deps.has(dep)) {
+            deps.add(dep);
+            try {
+              const resolved = require.resolve(dep, { paths: [appRoot] });
+              if (resolved.includes('node_modules')) {
+                await walk(resolved);
+              }
+            } catch {
+              // skip unresolvable
+            }
+          }
         }
+      } catch {
+        // skip missing files
       }
-    } catch {
-      // ignore unreadable files
     }
-    return seen;
+
+    await walk(file);
+    return deps;
   }
 
-  // Prebundle dependencies into cache dir (parallel)
+  // Helper: esbuild plugin to rewrite bare imports in dependency bundles to /@modules/
+  const dependencyBundlePlugin: esbuild.Plugin = {
+    name: 'dependency-bundle-plugin',
+    setup(build) {
+      // Intercept any bare import (not starting with . or /) that is NOT the entry point
+      build.onResolve({ filter: /^[^.\/]/ }, (args) => {
+        // If this is the initial entry point, don't externalize it
+        if (args.kind === 'entry-point') return null;
+
+        // Otherwise, externalize and point to /@modules/
+        return {
+          path: `/@modules/${args.path}`,
+          external: true,
+        };
+      });
+    },
+  };
+
+  // Prebundle dependencies into cache dir using code-splitting
   async function prebundleDeps(deps: Set<string>): Promise<void> {
     if (!deps.size) return;
-    const existingFiles = await fs.readdir(cacheDir);
-    const existing = new Set(existingFiles.map((f) => f.replace(/\.js$/, '')));
-    const missing = [...deps].filter((d) => !existing.has(d));
-    if (!missing.length) return;
 
-    console.log(chalk.cyan('📦 Prebundling:'), missing.join(', '));
-    await Promise.all(
-      missing.map(async (dep) => {
-        try {
-          const entryPoint = require.resolve(dep, { paths: [appRoot] });
-          const outFile = path.join(cacheDir, normalizeCacheKey(dep) + '.js');
-          await esbuild.build({
-            entryPoints: [entryPoint],
-            bundle: true,
-            platform: 'browser',
-            format: 'esm',
-            outfile: outFile,
-            write: true,
-            target: ['es2020'],
-          });
-          console.log(chalk.green(`✅ Cached ${dep}`));
-        } catch (err) {
-          console.warn(chalk.yellow(`⚠️ Skipped ${dep}: ${(err as Error).message}`));
+    const entryPoints: Record<string, string> = {};
+    const depsArray = [...deps];
+
+    // Create a temp directory for proxy files
+    const proxyDir = path.join(appRoot, '.react-client', 'proxies');
+    await fs.ensureDir(proxyDir);
+
+    for (const dep of depsArray) {
+      try {
+        const resolved = require.resolve(dep, { paths: [appRoot] });
+        const key = normalizeCacheKey(dep);
+        const proxyPath = path.join(proxyDir, `${key}.js`);
+        const resolvedPath = JSON.stringify(resolved);
+
+        let proxyCode = '';
+
+        // Precision Proxy: hardcoded exports for most critical React dependencies
+        const reactKeys = [
+          'useState',
+          'useEffect',
+          'useContext',
+          'useReducer',
+          'useCallback',
+          'useMemo',
+          'useRef',
+          'useImperativeHandle',
+          'useLayoutEffect',
+          'useDebugValue',
+          'useDeferredValue',
+          'useTransition',
+          'useId',
+          'useInsertionEffect',
+          'useSyncExternalStore',
+          'createElement',
+          'createContext',
+          'createRef',
+          'forwardRef',
+          'memo',
+          'lazy',
+          'Suspense',
+          'Fragment',
+          'Profiler',
+          'StrictMode',
+          'Children',
+          'Component',
+          'PureComponent',
+          'cloneElement',
+          'isValidElement',
+          'createFactory',
+          'version',
+          'startTransition',
+        ];
+        const reactDomClientKeys = ['createRoot', 'hydrateRoot'];
+        const reactDomKeys = [
+          'render',
+          'hydrate',
+          'unmountComponentAtNode',
+          'findDOMNode',
+          'createPortal',
+          'version',
+          'flushSync',
+        ];
+        const jsxRuntimeKeys = ['jsx', 'jsxs', 'Fragment'];
+
+        if (dep === 'react') {
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
+        } else if (dep === 'react-dom/client') {
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomClientKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
+        } else if (dep === 'react-dom') {
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
+        } else if (dep === 'react/jsx-runtime' || dep === 'react/jsx-dev-runtime') {
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${jsxRuntimeKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
+        } else {
+          try {
+            // Dynamic Proxy Generation for other deps
+            const m = require(resolved);
+            const keys = Object.keys(m).filter((k) => k !== 'default' && k !== '__esModule');
+            if (keys.length > 0) {
+              proxyCode = `import * as m from ${resolvedPath}; export const { ${keys.join(
+                ', ',
+              )} } = m; export default (m.default || m);`;
+            } else {
+              proxyCode = `import _default from ${resolvedPath}; export default _default;`;
+            }
+          } catch {
+            proxyCode = `export * from ${resolvedPath}; import _default from ${resolvedPath}; export default _default;`;
+          }
         }
-      }),
-    );
+
+        await fs.writeFile(proxyPath, proxyCode, 'utf8');
+        entryPoints[key] = proxyPath;
+      } catch (err) {
+        console.warn(chalk.yellow(`⚠️ Could not resolve ${dep}: ${(err as Error).message}`));
+      }
+    }
+
+    if (Object.keys(entryPoints).length === 0) return;
+
+    console.log(chalk.cyan('📦 Prebundling dependencies with precision proxies...'));
+
+    try {
+      await esbuild.build({
+        entryPoints,
+        bundle: true,
+        splitting: true, // Re-enable splitting for shared dependency chunks
+        format: 'esm',
+        outdir: cacheDir,
+        platform: 'browser',
+        target: ['es2020'],
+        minify: false,
+        plugins: [], // NO external plugins during prebundle, let esbuild manage the graph
+        define: {
+          'process.env.NODE_ENV': '"development"',
+        },
+        logLevel: 'error',
+      });
+
+      // Cleanup proxy dir after build
+      await fs.remove(proxyDir).catch(() => {});
+      console.log(chalk.green('✅ Prebundling complete.'));
+    } catch (err) {
+      console.error(chalk.red(`❌ Prebundling failed: ${(err as Error).message}`));
+    }
   }
 
   // Build initial prebundle graph from entry
   const depsSet = await analyzeGraph(entry);
+  // Ensure react/jsx-runtime is prebundled if used
+  depsSet.add('react/jsx-runtime');
   await prebundleDeps(depsSet);
 
   // Watch package.json for changes to re-prebundle
@@ -320,25 +498,75 @@ export default async function dev(): Promise<void> {
     chokidar.watch(pkgPath).on('change', async () => {
       console.log(chalk.yellow('📦 package.json changed — rebuilding prebundle...'));
       const newDeps = await analyzeGraph(entry);
+      newDeps.add('react/jsx-runtime');
       await prebundleDeps(newDeps);
     });
   }
   // --- Serve /@modules/<dep> (prebundled or on-demand esbuild bundle)
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
+
+    // Serve React Refresh runtime
+    if (url === '/@react-refresh') {
+      res.setHeader('Content-Type', jsContentType());
+      try {
+        const runtimePath = require.resolve('react-refresh/runtime');
+        // Bundle it to ESM for the browser
+        const bundled = await esbuild.build({
+          entryPoints: [runtimePath],
+          bundle: true,
+          format: 'iife',
+          globalName: '__REFRESH_RUNTIME__',
+          write: false,
+          minify: true,
+          define: {
+            'process.env.NODE_ENV': '"development"',
+          },
+        });
+        const runtimeCode = bundled.outputFiles?.[0]?.text ?? '';
+        return res.end(`
+          const prevRefreshReg = window.$RefreshReg$;
+          const prevRefreshSig = window.$RefreshSig$;
+          ${runtimeCode}
+          window.$RefreshReg$ = prevRefreshReg;
+          window.$RefreshSig$ = prevRefreshSig;
+          export default window.__REFRESH_RUNTIME__;
+        `);
+      } catch (err) {
+        res.writeHead(500);
+        return res.end(`// react-refresh runtime error: ${(err as Error).message}`);
+      }
+    }
+
     if (!url.startsWith('/@modules/')) return next();
     const id = url.replace(/^\/@modules\//, '');
     if (!id) {
       res.writeHead(400);
       return res.end('// invalid module');
     }
+
     try {
-      const cacheFile = path.join(cacheDir, normalizeCacheKey(id) + '.js');
+      // 1. Check if it's a file in the cache directory (prebundled or shared chunk)
+      // Chunks might be requested via /@modules/dep/chunk-xxx.js or just /@modules/chunk-xxx.js
+      const idBase = path.basename(id);
+      const cacheFile = id.endsWith('.js')
+        ? path.join(cacheDir, id)
+        : path.join(cacheDir, normalizeCacheKey(id) + '.js');
+      const cacheFileAlternative = path.join(cacheDir, idBase);
+
+      let foundCacheFile = '';
       if (await fs.pathExists(cacheFile)) {
-        res.setHeader('Content-Type', jsContentType());
-        return res.end(await fs.readFile(cacheFile, 'utf8'));
+        foundCacheFile = cacheFile;
+      } else if (await fs.pathExists(cacheFileAlternative)) {
+        foundCacheFile = cacheFileAlternative;
       }
-      // Resolve the actual entry file (handles subpaths & package exports)
+
+      if (foundCacheFile) {
+        res.setHeader('Content-Type', jsContentType());
+        return res.end(await fs.readFile(foundCacheFile, 'utf8'));
+      }
+
+      // 2. Resolve the actual entry file for bare imports
       const entryFile = await resolveModuleEntry(id, appRoot);
       const result = await esbuild.build({
         entryPoints: [entryFile],
@@ -347,6 +575,12 @@ export default async function dev(): Promise<void> {
         format: 'esm',
         write: false,
         target: ['es2020'],
+        jsx: 'automatic',
+        // Critical: use dependencyBundlePlugin to ensure sub-deps are rewritten to /@modules/
+        plugins: [dependencyBundlePlugin],
+        define: {
+          'process.env.NODE_ENV': '"development"',
+        },
       });
       const output = result.outputFiles?.[0]?.text ?? '';
       // Write cache and respond
@@ -358,12 +592,9 @@ export default async function dev(): Promise<void> {
       res.end(`// Failed to resolve module ${id}: ${(err as Error).message}`);
     }
   }) as NextHandleFunction);
+
   // --- Serve runtime overlay (inline, no external dependencies)
   const OVERLAY_RUNTIME = `
-/* inline overlay runtime - served at ${RUNTIME_OVERLAY_ROUTE} */
-${(() => {
-  // small helper — embed as a string
-  return `
 const overlayId = "__rc_error_overlay__";
 (function(){ 
   const style = document.createElement("style");
@@ -420,15 +651,15 @@ const overlayId = "__rc_error_overlay__";
   window.addEventListener("unhandledrejection", e => window.showErrorOverlay?.(e.reason || e));
 })();
 `;
-})()}
-`;
-  app.use(async (req, res, next) => {
-    if (req.url === RUNTIME_OVERLAY_ROUTE) {
+
+  app.use((async (req, res, next) => {
+    if (req.url === '/@runtime/overlay') {
       res.setHeader('Content-Type', jsContentType());
       return res.end(OVERLAY_RUNTIME);
     }
     next();
-  });
+  }) as NextHandleFunction);
+
   // --- minimal /@source-map: return snippet around requested line of original source file
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
@@ -461,11 +692,36 @@ const overlayId = "__rc_error_overlay__";
         })
         .join('\n');
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ source: file, line: lineNum, column: 0, snippet }));
+      res.end(JSON.stringify({ source: filePath, line: lineNum, column: 0, snippet }));
     } catch (err) {
       res.writeHead(500);
       res.end(JSON.stringify({ error: (err as Error).message }));
     }
+  }) as NextHandleFunction);
+
+  // --- Serve public/ files as static assets
+  app.use((async (req, res, next) => {
+    const raw = decodeURIComponent((req.url ?? '').split('?')[0]);
+    const publicFile = path.join(publicDir, raw.replace(/^\//, ''));
+    if ((await fs.pathExists(publicFile)) && !(await fs.stat(publicFile)).isDirectory()) {
+      const ext = path.extname(publicFile).toLowerCase();
+      // Simple content type map
+      const types: Record<string, string> = {
+        '.html': 'text/html',
+        '.js': 'application/javascript',
+        '.css': 'text/css',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+      };
+      const content = await fs.readFile(publicFile);
+      res.setHeader('Content-Type', types[ext] || 'application/octet-stream');
+      res.setHeader('Content-Length', content.length);
+      return res.end(content);
+    }
+    next();
   }) as NextHandleFunction);
 
   // --- Serve /src/* files (on-the-fly transform + bare import rewrite)
@@ -489,14 +745,6 @@ const overlayId = "__rc_error_overlay__";
     try {
       let code = await fs.readFile(found, 'utf8');
 
-      // rewrite bare imports -> /@modules/<dep>
-      code = code
-        .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(
-          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
-          (_m, dep) => `import("/@modules/${dep}")`,
-        );
-
       // run plugin transforms
       for (const p of plugins) {
         if (p.onTransform) {
@@ -505,7 +753,6 @@ const overlayId = "__rc_error_overlay__";
         }
       }
 
-      // choose loader by extension
       const ext = path.extname(found).toLowerCase();
       const loader: esbuild.Loader =
         ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
@@ -513,10 +760,36 @@ const overlayId = "__rc_error_overlay__";
         loader,
         sourcemap: 'inline',
         target: ['es2020'],
+        jsx: 'automatic',
       });
-      transformCache.set(found, result.code);
+
+      let transformedCode = result.code;
+
+      // Inject HMR/Refresh boilerplate (ESM-Safe: use global accessors and append logic)
+      const modulePath = '/' + path.relative(appRoot, found).replace(/\\/g, '/');
+
+      // 1. Replace import.meta.hot with a global context accessor (safe anywhere in ESM)
+      transformedCode = transformedCode.replace(
+        /import\.meta\.hot/g,
+        `window.__GET_HOT_CONTEXT__?.(${JSON.stringify(modulePath)})`,
+      );
+
+      // rewrite bare imports -> /@modules/<dep>
+      transformedCode = transformedCode
+        .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
+        .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`)
+        .replace(
+          /^(import\s+['"])([^'".\/][^'"]*)(['"])/gm,
+          (_m, start, dep, end) => `${start}/@modules/${dep}${end}`,
+        )
+        .replace(
+          /^(export\s+\*\s+from\s+['"])([^'".\/][^'"]*)(['"])/gm,
+          (_m, start, dep, end) => `${start}/@modules/${dep}${end}`,
+        );
+
+      transformCache.set(found, transformedCode);
       res.setHeader('Content-Type', jsContentType());
-      res.end(result.code);
+      res.end(transformedCode);
     } catch (err) {
       const e = err as Error;
       res.writeHead(500);
@@ -533,12 +806,25 @@ const overlayId = "__rc_error_overlay__";
       return res.end('index.html not found');
     }
     try {
-      let html = await fs.readFile(indexHtml, 'utf8');
-      // inject overlay runtime and HMR client if not already present
-      if (!html.includes(RUNTIME_OVERLAY_ROUTE)) {
-        html = html.replace(
-          '</body>',
-          `\n<script type="module" src="${RUNTIME_OVERLAY_ROUTE}"></script>\n<script type="module">
+      const html = await fs.readFile(indexHtml, 'utf8');
+      // React Refresh Preamble for index.html
+      const reactRefreshPreamble = `
+<script type="module">
+  import RefreshRuntime from "/@react-refresh";
+  RefreshRuntime.injectIntoGlobalHook(window);
+  window.$RefreshReg$ = () => {};
+  window.$RefreshSig$ = () => (type) => type;
+  window.__REFRESH_RUNTIME__ = RefreshRuntime;
+</script>
+<script type="module" src="/@runtime/overlay"></script>
+<script type="module">
+  window.__RC_HMR_STATE__ = { modules: {} };
+  window.__GET_HOT_CONTEXT__ = (id) => {
+    return window.__RC_HMR_STATE__.modules[id] || (window.__RC_HMR_STATE__.modules[id] = {
+      id,
+      accept: (cb) => { window.__RC_HMR_STATE__.modules[id].cb = cb || true; }
+    });
+  };
   const ws = new WebSocket("ws://" + location.host);
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
@@ -546,14 +832,25 @@ const overlayId = "__rc_error_overlay__";
     if (msg.type === "error") window.showErrorOverlay?.(msg);
     if (msg.type === "update") {
       window.clearErrorOverlay?.();
-      import(msg.path + "?t=" + Date.now());
+      const mod = window.__RC_HMR_STATE__.modules[msg.path];
+      if (mod && mod.cb) {
+        import(msg.path + "?t=" + Date.now()).then(() => {
+          if (typeof mod.cb === 'function') mod.cb();
+          // Trigger Fast Refresh after module update
+          if (window.__REFRESH_RUNTIME__) {
+            window.__REFRESH_RUNTIME__.performReactRefresh();
+          }
+        });
+      } else {
+        location.reload();
+      }
     }
   };
-</script>\n</body>`,
-        );
-      }
+</script>`.trim();
+      // Inject preamble at the top of <body>
+      const newHtml = html.replace('<body>', `<body>\n${reactRefreshPreamble}`);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(html);
+      res.end(newHtml);
     } catch (err) {
       res.writeHead(500);
       res.end(`// html read error: ${(err as Error).message}`);
@@ -605,11 +902,19 @@ const overlayId = "__rc_error_overlay__";
   });
 
   // graceful shutdown
-  process.on('SIGINT', async () => {
-    console.log(chalk.red('\n🛑 Shutting down...'));
-    await watcher.close();
-    broadcaster.close();
-    server.close();
-    process.exit(0);
-  });
+  const shutdown = async () => {
+    console.log(chalk.red('\n🛑 Shutting down dev server...'));
+    try {
+      await watcher.close();
+      broadcaster.close();
+      server.close();
+    } catch (err) {
+      console.error(chalk.red('⚠️ Error during shutdown:'), (err as Error).message);
+    } finally {
+      process.exit(0);
+    }
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }

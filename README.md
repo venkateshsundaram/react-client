@@ -1,196 +1,187 @@
+# ⚡ react-client
+
 [![npm](https://img.shields.io/npm/v/react-client.svg)](https://www.npmjs.com/package/react-client)
 [![npm](https://img.shields.io/npm/dt/react-client.svg)](https://npm-stat.com/charts.html?package=react-client)
 [![GitHub issues](https://img.shields.io/github/issues/venkateshsundaram/react-client.svg)](https://github.com/venkateshsundaram/react-client/issues)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-**react-client** is a next-generation CLI and runtime for building React apps with instant feedback, fast iteration, and a beautiful developer experience.
-
-Built for simplicity, designed for speed ⚡
-
----
-
-## 🚀 Table of Contents
-- [Installation](#installation)
-- [With Config](#with-config)
-- [Available Templates](#available-templates)
-- [Core Features](#core-features)
-- [How It Works](#how-it-works)
-- [Local Development](#local-development)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [Publishing](#publishing)
-- [Feedback](#feedback)
-- [License](#license)
+**react-client** is a lightweight, ultra-fast CLI and runtime for building React applications. Built for speed, it focuses on providing an instant development experience without the overhead of traditional bundlers.
 
 ---
 
-## 🧩 Installation
+## 🚀 Why react-client?
 
-Install globally and scaffold your first app:
+- 💨 **Instant Startup**: No more waiting for slow bundles. Start your dev server in milliseconds.
+- 🔄 **State-Preserving HMR**: React Fast Refresh keeps your application state across code changes.
+- 🎨 **Beautiful Error Overlay**: High-fidelity, syntax-highlighted error overlay with clickable file links.
+- 🗺️ **Source Map Support**: Runtime errors map directly back to your original source code.
+- 🔌 **Plug & Play**: Designed to work out of the box with zero configuration, yet highly extensible.
+
+---
+
+## 📋 Table of Contents
+
+- [Quick Start](#-quick-start)
+- [Available Templates](#-available-templates)
+- [CLI Command Reference](#-cli-command-reference)
+- [Configuration Reference](#-configuration-reference)
+- [Core Features](#-core-features)
+- [Local Development](#-local-development)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## ⚡ Quick Start
+
+Create and launch your first app in seconds:
 
 ```bash
+# install globally
 npm install -g react-client
-react-client init myapp --template react-ts
-cd myapp
+
+# initialize your project
+react-client init my-app --template react-ts
+
+# start developing
+cd my-app
 npm install
 npm run dev
 ```
 
-This launches the **custom dev server** — built on **Connect + WebSocket + esbuild**, featuring:
-- Instant rebuilds  
-- React Fast Refresh (HMR)  
-- Auto port detection & confirmation prompt  
-- In-browser overlay with syntax-highlighted code frames  
-
----
-
-## ⚙️ With Config
-
-You can generate a project-level configuration file using `--with-config`.
-
-```bash
-react-client init myapp --template react-ts --with-config
-```
-
-Creates:
-
-```js
-// react-client.config.js
-import { defineConfig } from 'react-client/config';
-
-export default defineConfig({
-  root: './src',
-  server: { port: 2202 },
-  build: { outDir: '.react-client/build' }
-});
-```
-
-✅ Loaded automatically by the CLI  
-✅ Type-safe with IntelliSense via `defineConfig()`  
-✅ Supports `.js`, `.mjs`, `.ts` (auto-compiled)  
+Your app will be live at `http://localhost:2202`!
 
 ---
 
 ## 🧰 Available Templates
 
-| Template | Description |
-|-----------|-------------|
-| `react` | JavaScript SPA |
-| `react-ts` | TypeScript SPA |
-| `react-tailwind` | JS + Tailwind |
-| `react-tailwind-ts` | TS + Tailwind |
+Choose from a variety of pre-configured templates to jumpstart your project:
 
-Each template is pre-configured for esbuild, HMR, and fast bootstrapping.
+| Template | Description | Tech Stack |
+| :--- | :--- | :--- |
+| `react` | Basic JavaScript setup | JS, React 18 |
+| `react-ts` | TypeScript-first setup | TS, React 18 |
+| `react-tailwind` | JS with Tailwind CSS | JS, React, Tailwind |
+| `react-tailwind-ts` | TS with Tailwind CSS | TS, React, Tailwind |
+
+> [!TIP]
+> Use the `--template` flag with `init` to specify your preferred starting point.
+
+---
+
+## 🛠️ CLI Command Reference
+
+### `init <project-name>`
+Scaffold a new React application.
+
+- `--template <name>`: Choose a template (default: `react-ts`).
+- `--with-config`: Generate a `react-client.config.js` file.
+
+### `dev`
+Start the development server with Hot Module Replacement (HMR).
+
+- Uses port `2202` by default (auto-detects and prompts if occupied).
+- Features on-the-fly esbuild transformations.
+
+### `build`
+Bundle your application for production.
+
+- Optimized output in `.react-client/build` (default).
+- Incremental rebuild support.
+
+### `preview`
+Serve your production build locally for final verification.
+
+---
+
+## ⚙️ Configuration Reference
+
+For more advanced control, generate a configuration file:
+
+```bash
+react-client init myapp --with-config
+```
+
+### `react-client.config.js`
+
+```javascript
+import { defineConfig } from 'react-client/config';
+
+export default defineConfig({
+  // 🧭 Root directory for the app
+  root: '.',
+
+  // ⚡ Dev server settings
+  server: {
+    port: 2202,
+  },
+
+  // 🏗️ Build options
+  build: {
+    outDir: '.react-client/build',
+  },
+
+  // 🔌 Plugins
+  plugins: [],
+});
+```
+
+| Property | Description | Default |
+| :--- | :--- | :--- |
+| `root` | The application's root directory | `.` |
+| `server.port` | The dev server port | `2202` |
+| `build.outDir` | Production build output directory | `.react-client/build` |
+| `plugins` | Array of react-client plugins | `[]` |
 
 ---
 
 ## 💎 Core Features
 
-- ⚡ **Custom Dev Server** — Connect + WebSocket + esbuild  
-- 🔁 **React Fast Refresh (HMR)** — State-preserving reloads  
-- 💥 **Overlay** — Syntax-highlighted stack frames, clickable file links (`vscode://file`)  
-- 🔍 **Source Map Stack Mapping** — Maps runtime errors to original TS/JS source lines  
-- 💬 **Auto Port Detection** — Prompts when default port 2202 is occupied  
-- 🧠 **Smart Config Loader** — Detects project root, compiles `.ts` configs dynamically  
-- 🔌 **Plugin Hook System** — Extendable with `configResolved`, `transform`, `buildEnd`  
+### 🔄 React Fast Refresh
+Experience true Hot Module Replacement that preserves your component state during development. No more manual page reloads when you fix a bug.
 
----
+### 💥 Interactive Error Overlay
+When something goes wrong, you get a beautiful, clear overlay.
+- **Syntax Highlighting**: Easily read the problematic code.
+- **Click-to-Open**: File links open directly in VS Code (`vscode://file/...`).
+- **Mapped Stacks**: Errors point to your original TSX/JSX lines, not the bundled output.
 
-## 🧬 How It Works
-
-**Under the hood:**
-
-1. **esbuild** handles bundling, incremental rebuilds, and sourcemaps.  
-2. **Connect** serves files and APIs (React Refresh runtime, overlay, source-map).  
-3. **WebSocket** pushes HMR updates and overlay messages.  
-4. **Chokidar** watches `/src` for changes and triggers rebuilds.  
+### ⚡ esbuild Powered
+We use esbuild for lightning-fast compilation, ensuring that even large applications stay responsive during development.
 
 ---
 
 ## 🧪 Local Development
 
-To test `react-client` locally:
+To contribute or test locally:
 
-```bash
-cd ~/Desktop/Workspace/Hoppy-projects/react-client
-npm run build
-npm link
-cd myapp
-react-client dev
-```
-
-If you run it from inside the CLI repo, it auto-detects and switches to `myapp/` as the root.
-
----
-
-## 🧩 Troubleshooting
-
-### ❌ Config not loading
-Make sure `react-client.config.js` exists in your project root (not `.ts`).
-
-```bash
-/Users/<you>/myapp/react-client.config.js
-```
-
-### ❌ `react-refresh/runtime` not found
-Install in the CLI or the project:
-```bash
-npm install react-refresh
-```
-
-### ⚠️ Port already in use
-CLI will auto-detect and prompt:
-```
-Port 2202 is occupied. Use 5174 instead? (Y/n)
-```
-
-### ⚠️ Permission denied
-Ensure your CLI entry file is executable:
-```bash
-chmod +x dist/cli/index.js
-npm link
-```
+1. Clone the repository
+2. Build the project: `npm run build`
+3. Link globally: `npm link`
+4. Test in a separate folder:
+   ```bash
+   mkdir test-app && cd test-app
+   react-client init demo
+   ```
 
 ---
 
-## 🧑‍💻 Contributing
+## 🤝 Contributing
 
-We welcome contributions!  
-Read the [Contributing Guide](./CONTRIBUTING.md) for setup instructions.
+We welcome all contributions! Whether it's adding new templates, fixing bugs, or improving documentation.
 
-```bash
-npm run lint
-npm run test
-npm run build
-```
-
----
-
-## 🚀 Publishing
-
-Before publishing:
-1. Update version in `package.json`  
-2. Run a full build  
-3. Ensure the entry file has execute permission  
-
-```bash
-npm run build
-npm publish
-```
-
-Your package now includes:
-- `#!/usr/bin/env node` shebang  
-- Auto-detecting config loader  
-- Built-in React Refresh runtime  
+Please check our [Contributing Guide](./CONTRIBUTING.md) to get started.
 
 ---
 
 ## 💬 Feedback
 
-Found an issue or have a feature request?  
-👉 [Open an issue](https://github.com/venkateshsundaram/react-client/issues)
+Found an issue or have a feature request?
+👉 [Open an issue on GitHub](https://github.com/venkateshsundaram/react-client/issues)
 
 ---
 
 ## 🪪 License
 
 **MIT Licensed** © [Venkatesh Sundaram](https://github.com/venkateshsundaram)
+

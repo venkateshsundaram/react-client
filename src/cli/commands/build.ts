@@ -14,13 +14,29 @@ export default async function build() {
   console.log(chalk.gray(`Root: ${appRoot}`));
   console.log(chalk.gray(`Output: ${outDir}\n`));
 
-  const entry = path.join(appRoot, 'src', 'main.tsx');
-  if (!fs.existsSync(entry)) {
-    console.error(chalk.red('❌ Entry not found: src/main.tsx'));
+  // Detect entry (main.tsx / main.jsx)
+  const paths = [
+    path.join(appRoot, 'src/main.tsx'),
+    path.join(appRoot, 'src/main.jsx'),
+    path.join(appRoot, 'main.tsx'),
+    path.join(appRoot, 'main.jsx'),
+  ];
+  const entry = paths.find((p) => fs.existsSync(p));
+  if (!entry) {
+    console.error(chalk.red('❌ Entry not found: main.tsx or main.jsx in app root or src/'));
     process.exit(1);
   }
 
   await fs.ensureDir(outDir);
+
+  // Copy public folder contents to outDir
+  let publicDir = path.join(appRoot, 'public');
+  if (!fs.existsSync(publicDir)) {
+    publicDir = path.join(root, 'public');
+  }
+  if (await fs.pathExists(publicDir)) {
+    await fs.copy(publicDir, outDir);
+  }
 
   try {
     await esbuild.build({
@@ -31,6 +47,7 @@ export default async function build() {
       outdir: outDir,
       define: { 'process.env.NODE_ENV': '"production"' },
       loader: { '.ts': 'ts', '.tsx': 'tsx', '.js': 'jsx', '.jsx': 'jsx' },
+      jsx: 'automatic',
     });
 
     console.log(chalk.green(`✅ Build completed successfully!`));
