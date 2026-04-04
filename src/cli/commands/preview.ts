@@ -56,19 +56,12 @@ export default async function preview(): Promise<void> {
     );
   }
 
-  const defaultPort = config.server?.port || 4173;
-  const port = await detectPort(defaultPort);
+  const defaultPort = Number(process.env.PORT) || config.server?.port || 4173;
+  const availablePort = await detectPort(defaultPort);
+  const port = availablePort;
+
   if (port !== defaultPort) {
-    const r = await prompts({
-      type: 'confirm',
-      name: 'useNewPort',
-      initial: true,
-      message: `Port ${defaultPort} is occupied. Use ${port} instead?`,
-    });
-    if (!r.useNewPort) {
-      console.log('🛑 Preview cancelled.');
-      process.exit(0);
-    }
+    console.log(chalk.yellow(`\n⚠️ Port ${defaultPort} is occupied. Using ${port} instead.`));
   }
 
   const server = http.createServer(async (req, res) => {
@@ -166,9 +159,13 @@ export default async function preview(): Promise<void> {
     await open(url, { newInstance: true });
   });
 
-  process.on('SIGINT', () => {
+  // graceful shutdown
+  const shutdown = async () => {
     console.log(chalk.red('\n🛑 Shutting down preview...'));
     server.close();
     process.exit(0);
-  });
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }

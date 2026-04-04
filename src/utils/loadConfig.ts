@@ -21,9 +21,11 @@ export async function loadReactClientConfig(cwd: string): Promise<ReactClientCon
   try {
     // Detect if running inside react-client repo for local testing
     const pkgPath = path.join(cwd, 'package.json');
+    const isLocalCLI = await fs.pathExists(path.join(cwd, 'src/cli/index.ts'));
+
     if (await fs.pathExists(pkgPath)) {
       const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
-      if (pkg.name === 'react-client' && (await fs.pathExists(path.join(cwd, 'myapp')))) {
+      if (pkg.name === 'react-client' && isLocalCLI && (await fs.pathExists(path.join(cwd, 'myapp')))) {
         console.log(chalk.gray('🧩 Detected local CLI environment, using ./myapp as root.'));
         projectRoot = path.join(cwd, 'myapp');
       }
@@ -53,33 +55,37 @@ export async function loadReactClientConfig(cwd: string): Promise<ReactClientCon
     const tempFile = path.join(projectRoot, `.react-client.temp-${Date.now()}.mjs`);
 
     // 🧠 Always compile .ts or .js → .mjs for safe ESM import
-    if (ext === '.ts' || ext === '.js') {
-      await build({
-        entryPoints: [configFile],
-        outfile: tempFile,
-        platform: 'node',
-        format: 'esm',
-        target: 'node18',
-        bundle: true,
-        write: true,
-        logLevel: 'silent',
-      });
-    } else {
-      await fs.copyFile(configFile, tempFile);
+    try {
+      if (ext === '.ts' || ext === '.js') {
+        await build({
+          entryPoints: [configFile],
+          outfile: tempFile,
+          platform: 'node',
+          format: 'esm',
+          target: 'node18',
+          bundle: true,
+          write: true,
+          logLevel: 'silent',
+        });
+      } else {
+        await fs.copyFile(configFile, tempFile);
+      }
+
+      // Import via file:// URL
+      const fileUrl = pathToFileURL(tempFile).href;
+      const mod = await import(fileUrl);
+      const config = mod.default || mod;
+      console.log(chalk.green(`🧩 Loaded config from ${path.basename(configFile)}`));
+      return config as ReactClientConfig;
+    } finally {
+      if (await fs.pathExists(tempFile)) {
+        await fs.remove(tempFile);
+      }
     }
-
-    // Import via file:// URL
-    const fileUrl = pathToFileURL(tempFile).href;
-    const mod = await import(fileUrl);
-    await fs.remove(tempFile);
-
-    const config = mod.default || mod;
-    console.log(chalk.green(`🧩 Loaded config from ${path.basename(configFile)}`));
-    return config as ReactClientConfig;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
-      chalk.red(`❌ Could not load config (${path.join(cwd, 'react-client.config.js')}): ${msg}`),
+      chalk.red(`❌ Could not load config: ${msg}`),
     );
     return {};
   }
