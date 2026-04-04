@@ -153,15 +153,40 @@ We use esbuild for lightning-fast compilation, ensuring that even large applicat
 
 ## 🧪 Local Development
 
-To contribute or test locally:
+To contribute or test the CLI locally:
 
-1. Clone the repository
-2. Build the project: `npm run build`
-3. Link globally: `npm link`
-4. Test in a separate folder:
+1. **Clone the repository**:
    ```bash
-   mkdir test-app && cd test-app
-   react-client init demo
+   git clone https://github.com/venkateshsundaram/react-client.git
+   cd react-client
+   ```
+
+2. **Install and Build**:
+   ```bash
+   npm install
+   npm run build
+   ```
+
+3. **Link for Global Testing**:
+   Use `npm link` to make the `react-client` command available globally, pointing to your local source:
+   ```bash
+   npm link
+   ```
+
+4. **Verify the CLI**:
+   Test the initialization in a separate temporary directory:
+   ```bash
+   mkdir test-run && cd test-run
+   react-client init my-test-app
+   ```
+
+   > [!NOTE]
+   > When running from a linked local repository, the `init` command automatically detects this and adds `react-client` as a `file:` devDependency in the new project's `package.json`, allowing you to test changes in real-time.
+
+5. **Cleaning Up**:
+   To remove the global link:
+   ```bash
+   npm uninstall -g react-client
    ```
 
 ---
