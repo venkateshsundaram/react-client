@@ -41,7 +41,7 @@ export default async function initCmd(name: string, opts: InitOptions) {
     // Fallback for different build/install structures
     templateDir = path.resolve(__dirname, '../../templates', template);
   }
-  
+
   if (!fs.existsSync(templateDir)) {
     console.error(chalk.red(`❌ Template not found: ${template}`));
     console.error(chalk.gray(`Search path: ${templateDir}`));
@@ -57,14 +57,14 @@ export default async function initCmd(name: string, opts: InitOptions) {
   if (fs.existsSync(pkgPath)) {
     try {
       const pkg = await fs.readJson(pkgPath);
-      
+
       // Get current react-client version
       const rootRepoPkgPath = path.resolve(__dirname, '../../../package.json');
       const distRepoPkgPath = path.resolve(__dirname, '../../package.json');
       let currentVersion = 'latest';
       let isLocalDev = false;
       let repoRoot = '';
-      
+
       if (fs.existsSync(rootRepoPkgPath)) {
         const rootPkg = await fs.readJson(rootRepoPkgPath);
         currentVersion = rootPkg.version;
@@ -82,21 +82,23 @@ export default async function initCmd(name: string, opts: InitOptions) {
       }
 
       pkg.devDependencies = pkg.devDependencies || {};
-      
+
       // If we are in local dev, use a relative file: dependency so npm install works
       if (isLocalDev && repoRoot) {
         const relativePath = path.relative(projectDir, repoRoot);
         pkg.devDependencies['react-client'] = `file:${relativePath}`;
-        console.log(chalk.blue(`🏠 Local development detected, using relative path for react-client.`));
+        console.log(
+          chalk.blue(`🏠 Local development detected, using relative path for react-client.`),
+        );
       } else {
         pkg.devDependencies['react-client'] = `^${currentVersion}`;
       }
-      
+
       // Ensure react-refresh is present as it's required for dev mode HMR
       if (!pkg.dependencies?.['react-refresh'] && !pkg.devDependencies?.['react-refresh']) {
         pkg.devDependencies['react-refresh'] = '^0.14.0';
       }
-      
+
       // update name to user's choice
       pkg.name = name;
 

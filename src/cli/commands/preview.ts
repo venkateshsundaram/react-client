@@ -3,7 +3,6 @@ import path from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
 import detectPort from 'detect-port';
-import prompts from 'prompts';
 import open from 'open';
 import { loadReactClientConfig } from '../../utils/loadConfig.js';
 

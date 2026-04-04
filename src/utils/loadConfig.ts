@@ -25,7 +25,11 @@ export async function loadReactClientConfig(cwd: string): Promise<ReactClientCon
 
     if (await fs.pathExists(pkgPath)) {
       const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
-      if (pkg.name === 'react-client' && isLocalCLI && (await fs.pathExists(path.join(cwd, 'myapp')))) {
+      if (
+        pkg.name === 'react-client' &&
+        isLocalCLI &&
+        (await fs.pathExists(path.join(cwd, 'myapp')))
+      ) {
         console.log(chalk.gray('🧩 Detected local CLI environment, using ./myapp as root.'));
         projectRoot = path.join(cwd, 'myapp');
       }
@@ -84,9 +88,7 @@ export async function loadReactClientConfig(cwd: string): Promise<ReactClientCon
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(
-      chalk.red(`❌ Could not load config: ${msg}`),
-    );
+    console.error(chalk.red(`❌ Could not load config: ${msg}`));
     return {};
   }
 }

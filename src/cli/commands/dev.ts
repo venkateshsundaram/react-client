@@ -17,7 +17,6 @@ import type { NextHandleFunction } from 'connect';
 import http from 'http';
 import chokidar from 'chokidar';
 import detectPort from 'detect-port';
-import prompts from 'prompts';
 import path from 'path';
 import fs from 'fs-extra';
 import open from 'open';
@@ -28,7 +27,7 @@ import type { ReactClientPlugin, ReactClientUserConfig } from '../../types/plugi
 import { createRequire } from 'module';
 
 import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
+import { dirname } from 'path';
 
 import { loadReactClientConfig } from '../../utils/loadConfig.js';
 
@@ -43,7 +42,6 @@ type HMRMessage = {
   message?: string;
   stack?: string;
 };
-const RUNTIME_OVERLAY_ROUTE = '/@runtime/overlay';
 function jsContentType() {
   return 'application/javascript; charset=utf-8';
 }
@@ -211,7 +209,9 @@ export default async function dev(): Promise<void> {
   const availablePort = await detectPort(defaultPort);
   const port = availablePort;
   if (availablePort !== defaultPort) {
-    console.log(chalk.yellow(`\n⚠️ Port ${defaultPort} is occupied. Using ${availablePort} instead.`));
+    console.log(
+      chalk.yellow(`\n⚠️ Port ${defaultPort} is occupied. Using ${availablePort} instead.`),
+    );
   }
 
   // Ensure react-refresh runtime available (used by many templates)
@@ -261,7 +261,9 @@ export default async function dev(): Promise<void> {
               const ___hot = window.__GET_HOT_CONTEXT__(${JSON.stringify(relativePath)});
               if (___hot) {
                 window.$RefreshReg$ = (type, id) => {
-                  window.__REFRESH_RUNTIME__.register(type, ${JSON.stringify(relativePath)} + " " + id);
+                  window.__REFRESH_RUNTIME__.register(type, ${JSON.stringify(
+                    relativePath,
+                  )} + " " + id);
                 };
                 window.$RefreshSig$ = () => window.__REFRESH_RUNTIME__.createSignatureFunctionForTransform();
               }
@@ -279,7 +281,7 @@ export default async function dev(): Promise<void> {
         }
         return code;
       },
-    }
+    },
   ];
   const userPlugins = Array.isArray(userConfig.plugins) ? userConfig.plugins : [];
   const plugins: ReactClientPlugin[] = [...corePlugins, ...userPlugins];
@@ -289,7 +291,7 @@ export default async function dev(): Promise<void> {
   const transformCache = new Map<string, string>();
   // Helper: recursively analyze dependency graph for prebundling (bare imports)
   // --- Dependency Analysis & Prebundling ---
-  async function analyzeGraph(file: string, seen = new Set<string>()): Promise<Set<string>> {
+  async function analyzeGraph(file: string, _seen = new Set<string>()): Promise<Set<string>> {
     const deps = new Set<string>();
     const visitedFiles = new Set<string>();
 
@@ -353,7 +355,7 @@ export default async function dev(): Promise<void> {
 
     const entryPoints: Record<string, string> = {};
     const depsArray = [...deps];
-    
+
     // Create a temp directory for proxy files
     const proxyDir = path.join(appRoot, '.react-client', 'proxies');
     await fs.ensureDir(proxyDir);
@@ -364,30 +366,82 @@ export default async function dev(): Promise<void> {
         const key = normalizeCacheKey(dep);
         const proxyPath = path.join(proxyDir, `${key}.js`);
         const resolvedPath = JSON.stringify(resolved);
-        
+
         let proxyCode = '';
-        
+
         // Precision Proxy: hardcoded exports for most critical React dependencies
-        const reactKeys = ['useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo', 'useRef', 'useImperativeHandle', 'useLayoutEffect', 'useDebugValue', 'useDeferredValue', 'useTransition', 'useId', 'useInsertionEffect', 'useSyncExternalStore', 'createElement', 'createContext', 'createRef', 'forwardRef', 'memo', 'lazy', 'Suspense', 'Fragment', 'Profiler', 'StrictMode', 'Children', 'Component', 'PureComponent', 'cloneElement', 'isValidElement', 'createFactory', 'version', 'startTransition'];
+        const reactKeys = [
+          'useState',
+          'useEffect',
+          'useContext',
+          'useReducer',
+          'useCallback',
+          'useMemo',
+          'useRef',
+          'useImperativeHandle',
+          'useLayoutEffect',
+          'useDebugValue',
+          'useDeferredValue',
+          'useTransition',
+          'useId',
+          'useInsertionEffect',
+          'useSyncExternalStore',
+          'createElement',
+          'createContext',
+          'createRef',
+          'forwardRef',
+          'memo',
+          'lazy',
+          'Suspense',
+          'Fragment',
+          'Profiler',
+          'StrictMode',
+          'Children',
+          'Component',
+          'PureComponent',
+          'cloneElement',
+          'isValidElement',
+          'createFactory',
+          'version',
+          'startTransition',
+        ];
         const reactDomClientKeys = ['createRoot', 'hydrateRoot'];
-        const reactDomKeys = ['render', 'hydrate', 'unmountComponentAtNode', 'findDOMNode', 'createPortal', 'version', 'flushSync'];
+        const reactDomKeys = [
+          'render',
+          'hydrate',
+          'unmountComponentAtNode',
+          'findDOMNode',
+          'createPortal',
+          'version',
+          'flushSync',
+        ];
         const jsxRuntimeKeys = ['jsx', 'jsxs', 'Fragment'];
 
         if (dep === 'react') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactKeys.join(', ')} } = m; export default (m.default || m);`;
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
         } else if (dep === 'react-dom/client') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomClientKeys.join(', ')} } = m; export default (m.default || m);`;
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomClientKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
         } else if (dep === 'react-dom') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomKeys.join(', ')} } = m; export default (m.default || m);`;
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
         } else if (dep === 'react/jsx-runtime' || dep === 'react/jsx-dev-runtime') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${jsxRuntimeKeys.join(', ')} } = m; export default (m.default || m);`;
+          proxyCode = `import * as m from ${resolvedPath}; export const { ${jsxRuntimeKeys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
         } else {
           try {
             // Dynamic Proxy Generation for other deps
             const m = require(resolved);
-            const keys = Object.keys(m).filter(k => k !== 'default' && k !== '__esModule');
+            const keys = Object.keys(m).filter((k) => k !== 'default' && k !== '__esModule');
             if (keys.length > 0) {
-              proxyCode = `import * as m from ${resolvedPath}; export const { ${keys.join(', ')} } = m; export default (m.default || m);`;
+              proxyCode = `import * as m from ${resolvedPath}; export const { ${keys.join(
+                ', ',
+              )} } = m; export default (m.default || m);`;
             } else {
               proxyCode = `import _default from ${resolvedPath}; export default _default;`;
             }
@@ -395,7 +449,7 @@ export default async function dev(): Promise<void> {
             proxyCode = `export * from ${resolvedPath}; import _default from ${resolvedPath}; export default _default;`;
           }
         }
-        
+
         await fs.writeFile(proxyPath, proxyCode, 'utf8');
         entryPoints[key] = proxyPath;
       } catch (err) {
@@ -423,7 +477,7 @@ export default async function dev(): Promise<void> {
         },
         logLevel: 'error',
       });
-      
+
       // Cleanup proxy dir after build
       await fs.remove(proxyDir).catch(() => {});
       console.log(chalk.green('✅ Prebundling complete.'));
@@ -451,7 +505,7 @@ export default async function dev(): Promise<void> {
   // --- Serve /@modules/<dep> (prebundled or on-demand esbuild bundle)
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
-    
+
     // Serve React Refresh runtime
     if (url === '/@react-refresh') {
       res.setHeader('Content-Type', jsContentType());
@@ -495,11 +549,11 @@ export default async function dev(): Promise<void> {
       // 1. Check if it's a file in the cache directory (prebundled or shared chunk)
       // Chunks might be requested via /@modules/dep/chunk-xxx.js or just /@modules/chunk-xxx.js
       const idBase = path.basename(id);
-      const cacheFile = id.endsWith('.js') 
-        ? path.join(cacheDir, id) 
+      const cacheFile = id.endsWith('.js')
+        ? path.join(cacheDir, id)
         : path.join(cacheDir, normalizeCacheKey(id) + '.js');
       const cacheFileAlternative = path.join(cacheDir, idBase);
-      
+
       let foundCacheFile = '';
       if (await fs.pathExists(cacheFile)) {
         foundCacheFile = cacheFile;
@@ -649,7 +703,7 @@ const overlayId = "__rc_error_overlay__";
   app.use((async (req, res, next) => {
     const raw = decodeURIComponent((req.url ?? '').split('?')[0]);
     const publicFile = path.join(publicDir, raw.replace(/^\//, ''));
-    if (await fs.pathExists(publicFile) && !(await fs.stat(publicFile)).isDirectory()) {
+    if ((await fs.pathExists(publicFile)) && !(await fs.stat(publicFile)).isDirectory()) {
       const ext = path.extname(publicFile).toLowerCase();
       // Simple content type map
       const types: Record<string, string> = {
@@ -710,20 +764,20 @@ const overlayId = "__rc_error_overlay__";
       });
 
       let transformedCode = result.code;
-      
+
       // Inject HMR/Refresh boilerplate (ESM-Safe: use global accessors and append logic)
       const modulePath = '/' + path.relative(appRoot, found).replace(/\\/g, '/');
-      
+
       // 1. Replace import.meta.hot with a global context accessor (safe anywhere in ESM)
-      transformedCode = transformedCode.replace(/import\.meta\.hot/g, `window.__GET_HOT_CONTEXT__?.(${JSON.stringify(modulePath)})`);
-      
+      transformedCode = transformedCode.replace(
+        /import\.meta\.hot/g,
+        `window.__GET_HOT_CONTEXT__?.(${JSON.stringify(modulePath)})`,
+      );
+
       // rewrite bare imports -> /@modules/<dep>
       transformedCode = transformedCode
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
-        .replace(
-          /\bimport\(['"]([^'".\/][^'"]*)['"]\)/g,
-          (_m, dep) => `import("/@modules/${dep}")`,
-        )
+        .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`)
         .replace(
           /^(import\s+['"])([^'".\/][^'"]*)(['"])/gm,
           (_m, start, dep, end) => `${start}/@modules/${dep}${end}`,
@@ -752,7 +806,7 @@ const overlayId = "__rc_error_overlay__";
       return res.end('index.html not found');
     }
     try {
-      let html = await fs.readFile(indexHtml, 'utf8');
+      const html = await fs.readFile(indexHtml, 'utf8');
       // React Refresh Preamble for index.html
       const reactRefreshPreamble = `
 <script type="module">
