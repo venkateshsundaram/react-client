@@ -74,7 +74,8 @@
     "prepublishOnly": "npm run lint && npm run format:check && npm run build && npm test",
     "test": "jest --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "verify": "bash scripts/local-verify.sh"
+    "verify": "bash scripts/local-verify.sh",
+    "precommit": "lint-staged"
   },
   "lint-staged": {
     "*.ts": [
