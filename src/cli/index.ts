@@ -18,7 +18,10 @@ const __dirname = dirname(__filename);
 
 // Load package.json version dynamically
 const pkgPath = resolve(__dirname, '../../package.json');
-const isMainModule = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+const isMainModule =
+  process.argv[1] &&
+  (pathToFileURL(process.argv[1]).href === import.meta.url ||
+    pathToFileURL(fs.realpathSync(process.argv[1])).href === import.meta.url);
 
 const pkg = fs.existsSync(pkgPath)
   ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
