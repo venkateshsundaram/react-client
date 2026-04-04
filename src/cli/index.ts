@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// test comment for husky
 import { dirname, resolve } from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
