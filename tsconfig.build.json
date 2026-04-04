@@ -19,6 +19,7 @@
     "src/server/**/*",
     "src/utils/**/*",
     "src/types/**/*",
-    "src/config.ts"
+    "src/config.ts",
+    "src/index.ts"
   ]
 }
