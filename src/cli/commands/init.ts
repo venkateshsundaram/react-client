@@ -35,10 +35,13 @@ export default async function initCmd(name: string, opts: InitOptions) {
   await fs.ensureDir(projectDir);
 
   // 2️⃣ Locate template
-  // Look for templates folder relative to this file, or in the package root
+  // Look for templates folder relative to this file
+  // local dev: src/cli/commands/init.ts -> ../../../templates
+  // build: dist/cli/commands/init.js -> ../../../templates
   let templateDir = path.resolve(__dirname, '../../../templates', template);
+
   if (!fs.existsSync(templateDir)) {
-    // Fallback for different build/install structures
+    // Fallback for flat structure: dist/cli/init.js -> ../../templates
     templateDir = path.resolve(__dirname, '../../templates', template);
   }
 
@@ -58,24 +61,28 @@ export default async function initCmd(name: string, opts: InitOptions) {
     try {
       const pkg = await fs.readJson(pkgPath);
 
-      // Get current react-client version
+      // Version and Environment Detection
       const rootRepoPkgPath = path.resolve(__dirname, '../../../package.json');
       const distRepoPkgPath = path.resolve(__dirname, '../../package.json');
       let currentVersion = 'latest';
       let isLocalDev = false;
       let repoRoot = '';
 
+      // Check if we are running from a node_modules install (not local dev)
+      const isInstalled = __dirname.includes('node_modules');
+
       if (fs.existsSync(rootRepoPkgPath)) {
         const rootPkg = await fs.readJson(rootRepoPkgPath);
         currentVersion = rootPkg.version;
-        if (rootPkg.name === 'react-client') {
+        // isLocalDev is true ONLY if NOT installed via npm AND name matches
+        if (!isInstalled && rootPkg.name === 'react-client') {
           isLocalDev = true;
           repoRoot = path.dirname(rootRepoPkgPath);
         }
       } else if (fs.existsSync(distRepoPkgPath)) {
         const distPkg = await fs.readJson(distRepoPkgPath);
         currentVersion = distPkg.version;
-        if (distPkg.name === 'react-client') {
+        if (!isInstalled && distPkg.name === 'react-client') {
           isLocalDev = true;
           repoRoot = path.dirname(distRepoPkgPath);
         }
