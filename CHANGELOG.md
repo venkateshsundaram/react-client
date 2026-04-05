@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.0](https://github.com/venkateshsundaram/react-client/compare/v1.0.43...v1.1.0) (2026-04-05)
+
+
+### Features
+
+* add playground support ([026414e](https://github.com/venkateshsundaram/react-client/commit/026414e1d5577103d05336b2fb6413d6bcd23cf5))
+
 ### [1.0.43](https://github.com/venkateshsundaram/react-client/compare/v1.0.42...v1.0.43) (2026-04-05)
 
 
