@@ -237,12 +237,50 @@ export default async function dev(): Promise<void> {
       name: 'css-hmr',
       async onTransform(code, id) {
         if (id.endsWith('.css')) {
-          const escaped = JSON.stringify(code);
+          let css = code;
+          // Dynamically try to load postcss/tailwind if config exists
+          const configPaths = [
+            path.join(appRoot, 'tailwind.config.js'),
+            path.join(appRoot, 'tailwind.config.cjs'),
+            path.join(appRoot, 'tailwind.config.mjs'),
+            path.join(appRoot, 'postcss.config.js'),
+            path.join(appRoot, 'postcss.config.cjs'),
+          ];
+          const hasConfig = configPaths.some((p) => fs.existsSync(p));
+
+          if (hasConfig) {
+            try {
+              // Resolve relative to appRoot
+              const appRequire = createRequire(path.join(appRoot, 'package.json'));
+
+              const postcss = appRequire('postcss');
+              const tailwindcss = appRequire('tailwindcss');
+              const autoprefixer = appRequire('autoprefixer');
+
+              const result = await postcss([tailwindcss, autoprefixer]).process(css, {
+                from: id,
+                to: id,
+              });
+              css = result.css;
+            } catch (err) {
+              console.warn(
+                chalk.yellow(`\n⚠️ PostCSS/Tailwind processing failed for ${id}:`),
+                (err as Error).message,
+              );
+            }
+          }
+
+          const escaped = JSON.stringify(css);
           return `
             const css = ${escaped};
-            const style = document.createElement("style");
+            const id = ${JSON.stringify(id)};
+            let style = document.getElementById(id);
+            if (!style) {
+              style = document.createElement("style");
+              style.id = id;
+              document.head.appendChild(style);
+            }
             style.textContent = css;
-            document.head.appendChild(style);
             import.meta.hot?.accept();
           `;
         }
@@ -335,19 +373,121 @@ export default async function dev(): Promise<void> {
   const dependencyBundlePlugin: esbuild.Plugin = {
     name: 'dependency-bundle-plugin',
     setup(build) {
-      // Intercept any bare import (not starting with . or /) that is NOT the entry point
+      // Intercept bare imports that are NOT the entry point
       build.onResolve({ filter: /^[^.\/]/ }, (args) => {
-        // If this is the initial entry point, don't externalize it
         if (args.kind === 'entry-point') return null;
-
-        // Otherwise, externalize and point to /@modules/
+        // Map to a virtual proxy module
         return {
-          path: `/@modules/${args.path}`,
-          external: true,
+          path: args.path,
+          namespace: 'react-client-external',
+        };
+      });
+
+      // Mark /@modules/ paths as external so esbuild leaves them alone
+      build.onResolve({ filter: /^\/@modules\// }, (args) => {
+        return { path: args.path, external: true };
+      });
+
+      // Generate a clean ESM proxy that redirects to /@modules/
+      build.onLoad({ filter: /.*/, namespace: 'react-client-external' }, (args) => {
+        return {
+          contents: `export * from "/@modules/${args.path}"; import d from "/@modules/${args.path}"; export default d;`,
+          loader: 'js',
         };
       });
     },
   };
+
+  function getProxyCode(dep: string, resolvedPath: string): string {
+    const resolvedPathEscaped = JSON.stringify(resolvedPath);
+    const reactKeys = [
+      'useState',
+      'useEffect',
+      'useContext',
+      'useReducer',
+      'useCallback',
+      'useMemo',
+      'useRef',
+      'useImperativeHandle',
+      'useLayoutEffect',
+      'useDebugValue',
+      'useDeferredValue',
+      'useTransition',
+      'useId',
+      'useInsertionEffect',
+      'useSyncExternalStore',
+      'createElement',
+      'createContext',
+      'createRef',
+      'forwardRef',
+      'memo',
+      'lazy',
+      'Suspense',
+      'Fragment',
+      'Profiler',
+      'StrictMode',
+      'Children',
+      'Component',
+      'PureComponent',
+      'cloneElement',
+      'isValidElement',
+      'createFactory',
+      'version',
+      'startTransition',
+    ];
+    const reactDomClientKeys = ['createRoot', 'hydrateRoot'];
+    const reactDomKeys = [
+      'render',
+      'hydrate',
+      'unmountComponentAtNode',
+      'findDOMNode',
+      'createPortal',
+      'version',
+      'flushSync',
+    ];
+    const jsxRuntimeKeys = ['jsx', 'jsxs', 'Fragment'];
+
+    if (dep === 'react') {
+      return `import * as m from ${resolvedPathEscaped}; export const { ${reactKeys.join(
+        ', ',
+      )} } = m; export default (m.default || m);`;
+    } else if (dep === 'react-dom/client') {
+      return `import * as m from ${resolvedPathEscaped}; export const { ${reactDomClientKeys.join(
+        ', ',
+      )} } = m; export default (m.default || m);`;
+    } else if (dep === 'react-dom') {
+      return `import * as m from ${resolvedPathEscaped}; export const { ${reactDomKeys.join(
+        ', ',
+      )} } = m; export default (m.default || m);`;
+    } else if (dep === 'react/jsx-runtime' || dep === 'react/jsx-dev-runtime') {
+      return `import * as m from ${resolvedPathEscaped}; export const { ${jsxRuntimeKeys.join(
+        ', ',
+      )} } = m; export default (m.default || m);`;
+    } else {
+      try {
+        const m = require(resolvedPath);
+        const keys = [...new Set([...Object.keys(m), ...Object.getOwnPropertyNames(m)])].filter(
+          (k) =>
+            k !== 'default' &&
+            k !== '__esModule' &&
+            k !== 'constructor' &&
+            k !== 'prototype' &&
+            k !== 'arguments' &&
+            k !== 'caller' &&
+            typeof k === 'string',
+        );
+        if (keys.length > 0) {
+          return `import * as m from ${resolvedPathEscaped}; export const { ${keys.join(
+            ', ',
+          )} } = m; export default (m.default || m);`;
+        } else {
+          return `import _default from ${resolvedPathEscaped}; export default _default;`;
+        }
+      } catch {
+        return `export * from ${resolvedPathEscaped}; import _default from ${resolvedPathEscaped}; export default _default;`;
+      }
+    }
+  }
 
   // Prebundle dependencies into cache dir using code-splitting
   async function prebundleDeps(deps: Set<string>): Promise<void> {
@@ -357,7 +497,7 @@ export default async function dev(): Promise<void> {
     const depsArray = [...deps];
 
     // Create a temp directory for proxy files
-    const proxyDir = path.join(appRoot, '.react-client', 'proxies');
+    const proxyDir = path.join(cacheDir, '_proxies');
     await fs.ensureDir(proxyDir);
 
     for (const dep of depsArray) {
@@ -365,90 +505,7 @@ export default async function dev(): Promise<void> {
         const resolved = require.resolve(dep, { paths: [appRoot] });
         const key = normalizeCacheKey(dep);
         const proxyPath = path.join(proxyDir, `${key}.js`);
-        const resolvedPath = JSON.stringify(resolved);
-
-        let proxyCode = '';
-
-        // Precision Proxy: hardcoded exports for most critical React dependencies
-        const reactKeys = [
-          'useState',
-          'useEffect',
-          'useContext',
-          'useReducer',
-          'useCallback',
-          'useMemo',
-          'useRef',
-          'useImperativeHandle',
-          'useLayoutEffect',
-          'useDebugValue',
-          'useDeferredValue',
-          'useTransition',
-          'useId',
-          'useInsertionEffect',
-          'useSyncExternalStore',
-          'createElement',
-          'createContext',
-          'createRef',
-          'forwardRef',
-          'memo',
-          'lazy',
-          'Suspense',
-          'Fragment',
-          'Profiler',
-          'StrictMode',
-          'Children',
-          'Component',
-          'PureComponent',
-          'cloneElement',
-          'isValidElement',
-          'createFactory',
-          'version',
-          'startTransition',
-        ];
-        const reactDomClientKeys = ['createRoot', 'hydrateRoot'];
-        const reactDomKeys = [
-          'render',
-          'hydrate',
-          'unmountComponentAtNode',
-          'findDOMNode',
-          'createPortal',
-          'version',
-          'flushSync',
-        ];
-        const jsxRuntimeKeys = ['jsx', 'jsxs', 'Fragment'];
-
-        if (dep === 'react') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactKeys.join(
-            ', ',
-          )} } = m; export default (m.default || m);`;
-        } else if (dep === 'react-dom/client') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomClientKeys.join(
-            ', ',
-          )} } = m; export default (m.default || m);`;
-        } else if (dep === 'react-dom') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${reactDomKeys.join(
-            ', ',
-          )} } = m; export default (m.default || m);`;
-        } else if (dep === 'react/jsx-runtime' || dep === 'react/jsx-dev-runtime') {
-          proxyCode = `import * as m from ${resolvedPath}; export const { ${jsxRuntimeKeys.join(
-            ', ',
-          )} } = m; export default (m.default || m);`;
-        } else {
-          try {
-            // Dynamic Proxy Generation for other deps
-            const m = require(resolved);
-            const keys = Object.keys(m).filter((k) => k !== 'default' && k !== '__esModule');
-            if (keys.length > 0) {
-              proxyCode = `import * as m from ${resolvedPath}; export const { ${keys.join(
-                ', ',
-              )} } = m; export default (m.default || m);`;
-            } else {
-              proxyCode = `import _default from ${resolvedPath}; export default _default;`;
-            }
-          } catch {
-            proxyCode = `export * from ${resolvedPath}; import _default from ${resolvedPath}; export default _default;`;
-          }
-        }
+        const proxyCode = getProxyCode(dep, resolved);
 
         await fs.writeFile(proxyPath, proxyCode, 'utf8');
         entryPoints[key] = proxyPath;
@@ -477,6 +534,20 @@ export default async function dev(): Promise<void> {
         },
         logLevel: 'error',
       });
+
+      // Rewrite all relative imports in cacheDir to absolute @modules imports for consistent resolution
+      const bundleFiles = await fs.readdir(cacheDir);
+      for (const file of bundleFiles) {
+        if (file.endsWith('.js')) {
+          const filePath = path.join(cacheDir, file);
+          let content = await fs.readFile(filePath, 'utf8');
+          content = content.replace(
+            /\b(from|import)\s+['"]\.\/([^'"]+)['"]/g,
+            (_m, type, chunk) => `${type} "/@modules/${chunk}"`,
+          );
+          await fs.writeFile(filePath, content, 'utf8');
+        }
+      }
 
       // Cleanup proxy dir after build
       await fs.remove(proxyDir).catch(() => {});
@@ -568,8 +639,13 @@ export default async function dev(): Promise<void> {
 
       // 2. Resolve the actual entry file for bare imports
       const entryFile = await resolveModuleEntry(id, appRoot);
+      const tempProxyDir = path.join(cacheDir, '_temp_on_demand');
+      await fs.ensureDir(tempProxyDir);
+      const proxyPath = path.join(tempProxyDir, `${normalizeCacheKey(id)}.js`);
+      await fs.writeFile(proxyPath, getProxyCode(id, entryFile), 'utf8');
+
       const result = await esbuild.build({
-        entryPoints: [entryFile],
+        entryPoints: [proxyPath],
         bundle: true,
         platform: 'browser',
         format: 'esm',
@@ -583,6 +659,8 @@ export default async function dev(): Promise<void> {
         },
       });
       const output = result.outputFiles?.[0]?.text ?? '';
+      // Cleanup temp proxy
+      await fs.remove(proxyPath).catch(() => {});
       // Write cache and respond
       await fs.writeFile(cacheFile, output, 'utf8');
       res.setHeader('Content-Type', jsContentType());
@@ -727,7 +805,7 @@ const overlayId = "__rc_error_overlay__";
   // --- Serve /src/* files (on-the-fly transform + bare import rewrite)
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
-    if (!url.startsWith('/src/') && !url.endsWith('.css')) return next();
+    if (url.includes('.') && !url.match(/\.[tj]sx?$/) && !url.endsWith('.css')) return next();
 
     const raw = decodeURIComponent((req.url ?? '').split('?')[0]);
     const filePath = path.join(appRoot, raw.replace(/^\//, ''));
@@ -735,9 +813,15 @@ const overlayId = "__rc_error_overlay__";
     const exts = ['', '.tsx', '.ts', '.jsx', '.js', '.css'];
     let found = '';
     for (const ext of exts) {
-      if (await fs.pathExists(filePath + ext)) {
-        found = filePath + ext;
-        break;
+      try {
+        const target = filePath + ext;
+        const stat = await fs.stat(target);
+        if (stat.isFile()) {
+          found = target;
+          break;
+        }
+      } catch {
+        // Continue
       }
     }
     if (!found) return next();
@@ -779,7 +863,7 @@ const overlayId = "__rc_error_overlay__";
         .replace(/\bfrom\s+['"]([^'".\/][^'"]*)['"]/g, (_m, dep) => `from "/@modules/${dep}"`)
         .replace(/\bimport\(['"]([^'".\/][^'"]*)['"]\)/g, (_m, dep) => `import("/@modules/${dep}")`)
         .replace(
-          /^(import\s+['"])([^'".\/][^'"]*)(['"])/gm,
+          /(\bimport\s+['"])([^'".\/][^'"]*)(['"])/gm,
           (_m, start, dep, end) => `${start}/@modules/${dep}${end}`,
         )
         .replace(

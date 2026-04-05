@@ -86,7 +86,7 @@ Start the development server with Hot Module Replacement (HMR).
 ### `build`
 Bundle your application for production.
 
-- Optimized output in `.react-client/build` (default).
+- Optimized output in `dist` (default).
 - Incremental rebuild support.
 
 ### `preview`
@@ -118,7 +118,7 @@ export default defineConfig({
 
   // 🏗️ Build options
   build: {
-    outDir: '.react-client/build',
+    outDir: 'dist',
   },
 
   // 🔌 Plugins
@@ -130,7 +130,7 @@ export default defineConfig({
 | :--- | :--- | :--- |
 | `root` | The application's root directory | `.` |
 | `server.port` | The dev server port | `2202` |
-| `build.outDir` | Production build output directory | `.react-client/build` |
+| `build.outDir` | Production build output directory | `dist` |
 | `plugins` | Array of react-client plugins | `[]` |
 
 ---
@@ -182,6 +182,24 @@ To contribute or test the CLI locally:
 
    > [!NOTE]
    > When running from a linked local repository, the `init` command automatically detects this and adds `react-client` as a `file:` devDependency in the new project's `package.json`, allowing you to test changes in real-time.
+
+6. **Verify All Templates**:
+   You can verify all templates are working by initializing them and running the dev server:
+   ```bash
+   # Test each template
+   react-client init my-react --template react
+   react-client init my-react-ts --template react-ts
+   react-client init my-tailwind --template react-tailwind
+   react-client init my-tailwind-ts --template react-tailwind-ts
+   ```
+
+7. **Verify Production Build**:
+   Ensure the production flow is functional:
+   ```bash
+   cd my-react-ts
+   react-client build
+   react-client preview
+   ```
 
 5. **Cleaning Up**:
    To remove the global link:
