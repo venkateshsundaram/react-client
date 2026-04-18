@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/venkateshsundaram/react-client/compare/v1.1.0...v1.2.0) (2026-04-18)
+
+
+### Features
+
+* add a support of route and component ([5baa175](https://github.com/venkateshsundaram/react-client/commit/5baa175daac79cab4c69ee9e811372d37e5690c9))
+
 ## [1.1.0](https://github.com/venkateshsundaram/react-client/compare/v1.0.43...v1.1.0) (2026-04-05)
 
 
