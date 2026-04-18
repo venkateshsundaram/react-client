@@ -178,6 +178,27 @@ export default async function dev(): Promise<void> {
   const appRoot = path.resolve(root, userConfig.root || '.');
   const defaultPort = Number(process.env.PORT) || userConfig.server?.port || 2202;
 
+  // Load .env variables
+  const envVars: Record<string, string> = {
+    'process.env.NODE_ENV': '"development"',
+  };
+  const envPath = path.join(appRoot, '.env');
+  if (await fs.pathExists(envPath)) {
+    const envContent = await fs.readFile(envPath, 'utf8');
+    envContent.split('\n').forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const [key, ...rest] = trimmed.split('=');
+      const val = rest
+        .join('=')
+        .trim()
+        .replace(/^['"]|['"]$/g, '');
+      if (key && (key.startsWith('RC_') || key.startsWith('PUBLIC_') || key.startsWith('VITE_'))) {
+        envVars[`process.env.${key}`] = JSON.stringify(val);
+      }
+    });
+  }
+
   // cache dir for prebundled deps
   const cacheDir = path.join(appRoot, '.react-client', 'deps');
   await fs.ensureDir(cacheDir);
@@ -599,6 +620,9 @@ export default async function dev(): Promise<void> {
           const prevRefreshReg = window.$RefreshReg$;
           const prevRefreshSig = window.$RefreshSig$;
           ${runtimeCode}
+          if (typeof __REFRESH_RUNTIME__ !== 'undefined') {
+            window.__REFRESH_RUNTIME__ = __REFRESH_RUNTIME__;
+          }
           window.$RefreshReg$ = prevRefreshReg;
           window.$RefreshSig$ = prevRefreshSig;
           export default window.__REFRESH_RUNTIME__;
@@ -805,12 +829,14 @@ const overlayId = "__rc_error_overlay__";
   // --- Serve /src/* files (on-the-fly transform + bare import rewrite)
   app.use((async (req, res, next) => {
     const url = req.url ?? '';
-    if (url.includes('.') && !url.match(/\.[tj]sx?$/) && !url.endsWith('.css')) return next();
+    const isAsset = url.match(/\.(png|jpe?g|gif|svg|webp|avif|json)$/i);
+    if (url.includes('.') && !url.match(/\.[tj]sx?$/) && !url.endsWith('.css') && !isAsset)
+      return next();
 
     const raw = decodeURIComponent((req.url ?? '').split('?')[0]);
     const filePath = path.join(appRoot, raw.replace(/^\//, ''));
     // Try file extensions if not exact file
-    const exts = ['', '.tsx', '.ts', '.jsx', '.js', '.css'];
+    const exts = ['', '.tsx', '.ts', '.jsx', '.js', '.css', '.json'];
     let found = '';
     for (const ext of exts) {
       try {
@@ -826,6 +852,44 @@ const overlayId = "__rc_error_overlay__";
     }
     if (!found) return next();
 
+    // Handle Asset Imports (Images, SVGs, etc.)
+    const ext = path.extname(found).toLowerCase();
+    const assets = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif'];
+    if (assets.includes(ext)) {
+      const secFetchDest = req.headers['sec-fetch-dest'];
+      const accept = req.headers.accept || '';
+
+      // It's an import if:
+      // 1. Explicitly requested via ?import
+      // 2. Browser indicates script destination (Sec-Fetch-Dest: script)
+      // 3. Accept header prefers JS and NOT images
+      const isImport =
+        req.url?.includes('?import') ||
+        secFetchDest === 'script' ||
+        (accept.includes('application/javascript') && !accept.includes('image/'));
+
+      const relativePath = '/' + path.relative(appRoot, found).replace(/\\/g, '/');
+
+      if (isImport) {
+        res.setHeader('Content-Type', jsContentType());
+        return res.end(`export default ${JSON.stringify(relativePath)};`);
+      }
+
+      // Serve raw asset
+      const types: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.webp': 'image/webp',
+        '.avif': 'image/avif',
+      };
+      const content = await fs.readFile(found);
+      res.setHeader('Content-Type', types[ext] || 'application/octet-stream');
+      return res.end(content);
+    }
+
     try {
       let code = await fs.readFile(found, 'utf8');
 
@@ -839,12 +903,21 @@ const overlayId = "__rc_error_overlay__";
 
       const ext = path.extname(found).toLowerCase();
       const loader: esbuild.Loader =
-        ext === '.ts' ? 'ts' : ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'js';
+        ext === '.ts'
+          ? 'ts'
+          : ext === '.tsx'
+          ? 'tsx'
+          : ext === '.jsx'
+          ? 'jsx'
+          : ext === '.json'
+          ? 'json'
+          : 'js';
       const result = await esbuild.transform(code, {
         loader,
         sourcemap: 'inline',
         target: ['es2020'],
         jsx: 'automatic',
+        define: envVars,
       });
 
       let transformedCode = result.code;
@@ -883,8 +956,21 @@ const overlayId = "__rc_error_overlay__";
 
   // --- Serve index.html with overlay + HMR client injection
   app.use((async (req, res, next) => {
-    const url = req.url ?? '';
-    if (url !== '/' && url !== '/index.html') return next();
+    if (req.method !== 'GET') return next();
+
+    const url = (req.url ?? '').split('?')[0];
+    const isHtmlRequest = req.headers.accept?.includes('text/html');
+    const isInternal = url.startsWith('/@');
+    const hasExtension = url.includes('.') && !url.endsWith('.html');
+
+    // Fallback to index.html for:
+    // 1. Root and /index.html
+    // 2. Client-side routes (no extension and not internal)
+    // 3. Explicit HTML requests (e.g. from browser address bar)
+    const shouldServeIndex =
+      url === '/' || url === '/index.html' || (!isInternal && !hasExtension) || isHtmlRequest;
+
+    if (!shouldServeIndex) return next();
     if (!(await fs.pathExists(indexHtml))) {
       res.writeHead(404);
       return res.end('index.html not found');
