@@ -55,6 +55,12 @@ export default async function initCmd(name: string, opts: InitOptions) {
   console.log(chalk.gray(`\n📁 Copying template: ${template}...`));
   await fs.copy(templateDir, projectDir);
 
+  // Rename gitignore to .gitignore
+  const gitignorePath = path.join(projectDir, 'gitignore');
+  if (await fs.pathExists(gitignorePath)) {
+    await fs.rename(gitignorePath, path.join(projectDir, '.gitignore'));
+  }
+
   // 4️⃣ Update package.json to include react-client as a devDependency
   const pkgPath = path.join(projectDir, 'package.json');
   if (fs.existsSync(pkgPath)) {

@@ -46,9 +46,7 @@ export async function route(name: string) {
   }
 
   // 3️⃣ Generate the component
-  const componentContent = `import React from 'react';
-
-export default function ${componentName}() {
+  const componentContent = `export default function ${componentName}() {
   return (
     <div style={{ padding: '2rem' }}>
       <h1>${componentName} Page</h1>
@@ -129,8 +127,7 @@ async function setupInitialRouter(root: string, srcDir: string, isTS: boolean, f
   }
 
   // Update App.tsx/jsx to basic Routes structure
-  const appContent = `import React from 'react';
-import { Routes, Route, Link } from 'react-router-dom';
+  const appContent = `import { Routes, Route, Link } from 'react-router-dom';
 import ${firstPage} from './pages/${firstPage}';
 import './App.css';
 
@@ -245,17 +242,15 @@ export async function component(name: string) {
   }
 
   // 3️⃣ Generate the component
-  const componentContent = `import React from 'react';
-
-${
-  isTS
-    ? `export interface ${componentName}Props {
+  const componentContent = `${
+    isTS
+      ? `export interface ${componentName}Props {
   children?: React.ReactNode;
 }
 
 `
-    : ''
-}export default function ${componentName}(${
+      : ''
+  }export default function ${componentName}(${
     isTS ? `{ children }: ${componentName}Props` : '{ children }'
   }) {
   return (
