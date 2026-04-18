@@ -11,6 +11,7 @@ import type { InitOptions } from './types';
 import devCmd from './commands/dev.js';
 import buildCmd from './commands/build.js';
 import previewCmd from './commands/preview.js';
+import generateCmd from './commands/generate.js';
 
 // Polyfill for __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -48,6 +49,9 @@ function showBanner(cmd?: string) {
       break;
     case 'preview':
       console.log(chalk.blue('🌐 Starting production preview server...\n'));
+      break;
+    case 'generate':
+      console.log(chalk.magenta('✨ Generating scaffold...\n'));
       break;
     default:
       console.log();
@@ -98,6 +102,26 @@ program
   .action(() => {
     showBanner('preview');
     previewCmd();
+  });
+
+const generate = program
+  .command('generate')
+  .description('generate project scaffolds (route, component, etc.)');
+
+generate
+  .command('route <name>')
+  .description('generate a new route with react-router-dom')
+  .action((name: string) => {
+    showBanner('generate');
+    generateCmd.route(name);
+  });
+
+generate
+  .command('component <name>')
+  .description('generate a new React component')
+  .action((name: string) => {
+    showBanner('generate');
+    generateCmd.component(name);
   });
 
 // ------------------------------------------------------

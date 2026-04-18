@@ -24,6 +24,11 @@
 - [Quick Start](#-quick-start)
 - [Available Templates](#-available-templates)
 - [CLI Command Reference](#-cli-command-reference)
+    - [init](#init-project-name)
+    - [dev](#dev)
+    - [build](#build)
+    - [preview](#preview)
+    - [generate](#generate)
 - [Configuration Reference](#-configuration-reference)
 - [Core Features](#-core-features)
 - [Local Development](#-local-development)
@@ -91,6 +96,18 @@ Bundle your application for production.
 
 ### `preview`
 Serve your production build locally for final verification.
+
+### `generate`
+Scaffold new project elements like routes and components.
+
+#### `generate route <route-name>`
+Create a new page and automatically register it.
+- **Auto-setup**: Installs `react-router-dom` and sets up the router if not already present.
+- **Auto-registration**: Adds the route and a navigation link to your `App.tsx`.
+
+#### `generate component <component-name>`
+Create a new generic component in `src/components`.
+- **Template**: Generates a functional component with boilerplate (including TS props if applicable).
 
 ---
 
